@@ -10,3 +10,5 @@ export * from "./model/references.ts";
 export * from "./model/validate.ts";
 export * from "./persistence/migrations.ts";
 export * from "./persistence/project-file.ts";
+export * from "./history.ts";
+export * from "./edits.ts";

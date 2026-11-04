@@ -1,10 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import * as z from "zod/mini";
-import { createEmptyProject, createIdGenerator, validateProject } from "../core/index.ts";
-import { App } from "../ui/App.tsx";
+import { createEmptyProject, createIdGenerator } from "../core/index.ts";
 import { en } from "../ui/strings.ts";
 import "../ui/styles.css";
+import { Shell } from "./Shell.tsx";
 
 // Zod's JIT probes `new Function`; the CSP has no 'unsafe-eval', so the probe would only
 // log a CSP violation. Interpreted parsing is fast enough for project files.
@@ -17,14 +17,11 @@ const newId = createIdGenerator({
   },
 });
 
-const project = createEmptyProject(en.untitledProject, newId);
-const issues = validateProject(project);
-
 const container = document.getElementById("root");
 if (container === null) throw new Error("#root missing");
 
 createRoot(container).render(
   <StrictMode>
-    <App strings={en} version={__APP_VERSION__} project={project} issueCount={issues.length} />
+    <Shell strings={en} version={__APP_VERSION__} newId={newId} initialProject={createEmptyProject(en.untitledProject, newId)} />
   </StrictMode>,
 );
