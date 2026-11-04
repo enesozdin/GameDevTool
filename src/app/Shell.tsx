@@ -7,15 +7,21 @@ import {
   createTable,
   CURRENT_SCHEMA_VERSION,
   loadProject,
+  openProjectFolder,
+  readFolderSession,
   redoLabel,
   removeAsset,
   renameAsset,
   renameProject,
   saveProject,
+  saveProjectFolder,
   undoLabel,
   validateProject,
   type Asset,
   type Change,
+  type FolderIo,
+  type FolderLoadError,
+  type FolderSession,
   type Id,
   type IdGenerator,
   type Project,
@@ -25,6 +31,7 @@ import type { UiStrings } from "../ui/strings.ts";
 import { AssetPanel, incomingReferenceCount, ProjectPanel } from "./panels.tsx";
 import { initialState, isDirty, reducer } from "./state.ts";
 import { defaultFileName, downloadProject, pickProjectFile, readProjectFile } from "./storage/project-file.ts";
+import { createFolderIo, ensureWritable, isFolderModeSupported, pickProjectFolder } from "./storage/project-folder.ts";
 import { clearRecovery, readLatestRecovery, writeRecovery, type RecoveryEntry } from "./storage/recovery.ts";
 
 /** Debounce for the crash-recovery write. Flushed immediately when the tab is hidden. */
@@ -45,11 +52,26 @@ interface Notice {
   readonly kind: "info" | "error";
 }
 
+/** The open project folder: its handle and what this app knows is on disk. */
+interface OpenFolder {
+  readonly handle: FileSystemDirectoryHandle;
+  readonly io: FolderIo;
+  readonly session: FolderSession;
+}
+
+const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
 export function Shell({ strings, version, newId, initialProject }: ShellProps) {
   const [state, dispatch] = useReducer(reducer, initialProject, initialState);
   const [selectedId, setSelectedId] = useState<Id | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [recovery, setRecovery] = useState<RecoveryEntry | null>(null);
+  const [saving, setSaving] = useState(false);
+  const folderMode = useMemo(isFolderModeSupported, []);
+  /** Set while the project's target is a folder. Kept outside the reducer: it holds a handle. */
+  const folder = useRef<OpenFolder | null>(null);
+  /** Guards against overlapping saves (e.g. Ctrl+S pressed again while writing). */
+  const busy = useRef(false);
 
   const project = state.history.present;
   const dirty = isDirty(state);
@@ -64,11 +86,65 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
 
   const confirmDiscard = () => !dirty || window.confirm(strings.confirm.discardChanges);
 
+  const loadErrorText = (error: FolderLoadError) => {
+    const reason = strings.loadErrors[error.code] ?? error.code;
+    return "file" in error && error.file !== undefined ? `${reason} ${strings.inFile(error.file)}` : reason;
+  };
+
+  /** Writes `snapshot` to the folder. Returns true when the whole project was saved. */
+  const writeFolder = async (target: OpenFolder, snapshot: Project, confirmed: boolean): Promise<boolean> => {
+    if (!(await ensureWritable(target.handle))) {
+      setNotice({ kind: "error", text: strings.saveErrors.permission });
+      return false;
+    }
+    let result = await saveProjectFolder(target.io, target.session, snapshot, { overwrite: confirmed });
+    if (result.status === "conflict") {
+      if (!window.confirm(strings.confirm.overwriteChanged(result.paths.length, result.paths[0]!))) {
+        setNotice({ kind: "info", text: strings.status.notSaved });
+        return false;
+      }
+      result = await saveProjectFolder(target.io, target.session, snapshot, { overwrite: true });
+    }
+    switch (result.status) {
+      case "saved":
+        folder.current = { ...target, session: result.session };
+        dispatch({ type: "saved", project: snapshot, target: { kind: "folder", name: target.handle.name } });
+        setNotice({ kind: "info", text: strings.status.savedFolder(target.handle.name, result.written, result.removed) });
+        return true;
+      case "failed":
+        // Keep what was written, but only for the folder that is already the save target.
+        if (folder.current?.handle === target.handle) folder.current = { ...target, session: result.session };
+        setNotice({ kind: "error", text: strings.saveErrors.failed(result.path, result.message) });
+        return false;
+      case "duplicate-id":
+        setNotice({ kind: "error", text: strings.saveErrors["duplicate-id"] });
+        return false;
+      case "conflict":
+        return false;
+    }
+  };
+
+  /** Runs one save at a time and shows "Saving…" while it runs. */
+  const exclusive = async (body: () => Promise<unknown>) => {
+    if (busy.current) return;
+    busy.current = true;
+    setSaving(true);
+    try {
+      await body();
+    } catch (e) {
+      setNotice({ kind: "error", text: strings.saveErrors.folderUnavailable(errorText(e)) });
+    } finally {
+      busy.current = false;
+      setSaving(false);
+    }
+  };
+
   // ---- Actions ------------------------------------------------------------------------
   const actions = {
     newProject() {
       if (!confirmDiscard()) return;
-      dispatch({ type: "replace", project: createEmptyProject(strings.untitledProject, newId), fileName: null, saved: true });
+      folder.current = null;
+      dispatch({ type: "replace", project: createEmptyProject(strings.untitledProject, newId), target: null, saved: true });
       setSelectedId(null);
       setNotice(null);
     },
@@ -82,19 +158,67 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
         return;
       }
       const { fileName, loaded } = result.value;
+      folder.current = null;
       // A migrated project differs from its file until saved, so it starts dirty.
-      dispatch({ type: "replace", project: loaded.project, fileName, saved: loaded.migratedFrom === undefined });
+      dispatch({ type: "replace", project: loaded.project, target: { kind: "file", name: fileName }, saved: loaded.migratedFrom === undefined });
       setSelectedId(null);
       setNotice({
         kind: "info",
         text: loaded.migratedFrom === undefined ? strings.status.opened(fileName) : strings.status.migrated(loaded.migratedFrom, CURRENT_SCHEMA_VERSION),
       });
     },
+    openFolder: () =>
+      exclusive(async () => {
+        if (!confirmDiscard()) return;
+        const handle = await pickProjectFolder();
+        if (handle === null) return;
+        const io = createFolderIo(handle);
+        const result = await openProjectFolder(io);
+        if (!result.ok) {
+          setNotice({ kind: "error", text: strings.openFolderFailed(loadErrorText(result.error)) });
+          return;
+        }
+        const { loaded, session } = result.value;
+        folder.current = { handle, io, session };
+        // Migrated: the files are older than the project in memory until saved.
+        dispatch({ type: "replace", project: loaded.project, target: { kind: "folder", name: handle.name }, saved: loaded.migratedFrom === undefined });
+        setSelectedId(null);
+        setNotice({
+          kind: "info",
+          text: loaded.migratedFrom === undefined ? strings.status.openedFolder(handle.name) : strings.status.migrated(loaded.migratedFrom, CURRENT_SCHEMA_VERSION),
+        });
+      }),
+    saveToFolder: () =>
+      exclusive(async () => {
+        const handle = await pickProjectFolder();
+        if (handle === null) return;
+        const io = createFolderIo(handle);
+        const session = await readFolderSession(io);
+        if (!session.ok) {
+          setNotice({ kind: "error", text: strings.saveErrors.folderUnavailable(strings.loadErrors["read-failed"]!) });
+          return;
+        }
+        if (session.value.manifest !== null && !window.confirm(strings.confirm.replaceFolderProject(handle.name))) return;
+        // On failure the folder does not become the target; "Save to folder…" again resumes,
+        // because the files already written are picked up by readFolderSession.
+        await writeFolder({ handle, io, session: session.value }, project, true);
+      }),
     save() {
-      const fileName = state.fileName ?? defaultFileName(project.manifest.name);
+      if (state.target?.kind === "folder" && folder.current !== null) {
+        const target = folder.current;
+        void exclusive(() => writeFolder(target, project, false));
+        return;
+      }
+      const fileName = state.target?.kind === "file" ? state.target.name : defaultFileName(project.manifest.name);
       downloadProject(project, fileName);
-      dispatch({ type: "saved", fileName });
+      folder.current = null;
+      dispatch({ type: "saved", project, target: { kind: "file", name: fileName } });
       setNotice({ kind: "info", text: strings.status.savedFile(fileName) });
+    },
+    downloadCopy() {
+      const fileName = defaultFileName(project.manifest.name);
+      downloadProject(project, fileName);
+      setNotice({ kind: "info", text: strings.status.downloaded(fileName) });
     },
     undo: () => dispatch({ type: "undo" }),
     redo: () => dispatch({ type: "redo" }),
@@ -189,7 +313,8 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
       setNotice({ kind: "error", text: strings.openFailed(strings.loadErrors[loaded.error.code] ?? loaded.error.code) });
       return;
     }
-    dispatch({ type: "replace", project: loaded.value.project, fileName: null, saved: false });
+    folder.current = null;
+    dispatch({ type: "replace", project: loaded.value.project, target: null, saved: false });
     setSelectedId(null);
     setNotice({ kind: "info", text: strings.status.recovered });
   };
@@ -203,7 +328,14 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
   const t = strings.toolbar;
   const nextUndo = undoLabel(state.history);
   const nextRedo = redoLabel(state.history);
-  const statusText = dirty ? strings.status.unsaved : state.fileName === null ? strings.status.neverSaved : strings.status.saved;
+  const statusText = saving
+    ? strings.status.saving
+    : dirty
+      ? strings.status.unsaved
+      : state.target === null
+        ? strings.status.neverSaved
+        : strings.status.saved;
+  const inFolder = state.target?.kind === "folder";
   const formatTime = (ms: number) => new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(ms);
 
   return (
@@ -220,9 +352,24 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
           <button type="button" onClick={() => void actions.open()} title={t.withShortcut(t.open, `${MOD}O`)}>
             {t.open}
           </button>
-          <button type="button" onClick={actions.save} title={t.withShortcut(t.save, `${MOD}S`)}>
+          {folderMode && (
+            <button type="button" onClick={() => void actions.openFolder()} title={t.folderHint} disabled={saving}>
+              {t.openFolder}
+            </button>
+          )}
+          <button type="button" onClick={actions.save} title={t.withShortcut(t.save, `${MOD}S`)} disabled={saving}>
             {t.save}
           </button>
+          {folderMode && (
+            <button type="button" onClick={() => void actions.saveToFolder()} title={t.folderHint} disabled={saving}>
+              {t.saveToFolder}
+            </button>
+          )}
+          {inFolder && (
+            <button type="button" onClick={actions.downloadCopy} title={t.downloadCopyHint}>
+              {t.downloadCopy}
+            </button>
+          )}
           <span className="toolbar-sep" aria-hidden="true" />
           <button
             type="button"
@@ -309,7 +456,7 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
             <ProjectPanel
               strings={strings}
               project={project}
-              fileName={state.fileName}
+              target={state.target}
               issues={issues}
               onRename={(name) => commitChange(renameProject(project, name))}
               onSelectAsset={setSelectedId}

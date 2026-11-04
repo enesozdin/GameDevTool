@@ -229,6 +229,8 @@ input[aria-invalid="true"] {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
+  /* File paths and ids have no spaces; let them break instead of widening the page. */
+  overflow-wrap: anywhere;
 }
 
 .notice-error {

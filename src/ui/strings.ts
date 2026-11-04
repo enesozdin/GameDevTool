@@ -18,7 +18,12 @@ export const en = {
     label: "Project",
     new: "New",
     open: "Open…",
+    openFolder: "Open folder…",
     save: "Save",
+    saveToFolder: "Save to folder…",
+    downloadCopy: "Download copy",
+    downloadCopyHint: "Download the project as a single .gdtproj file",
+    folderHint: "Folder mode: one file per asset, for use with Git",
     undo: "Undo",
     redo: "Redo",
     undoAction: (action: string) => `Undo ${action}`,
@@ -32,12 +37,26 @@ export const en = {
     neverSaved: "Not saved yet",
     opened: (file: string) => `Opened ${file}`,
     savedFile: (file: string) => `Saved ${file}`,
+    openedFolder: (folder: string) => `Opened folder ${folder}`,
+    savedFolder: (folder: string, written: number, removed: number) => {
+      const parts: string[] = [];
+      if (written > 0) parts.push(`${written} ${written === 1 ? "file" : "files"} written`);
+      if (removed > 0) parts.push(`${removed} ${removed === 1 ? "file" : "files"} removed`);
+      return parts.length === 0 ? `Saved to ${folder}. No files changed.` : `Saved to ${folder}: ${parts.join(", ")}.`;
+    },
+    downloaded: (file: string) => `Downloaded ${file}`,
+    saving: "Saving…",
+    notSaved: "Not saved.",
     migrated: (from: number, to: number) => `Upgraded from schema version ${from} to ${to}. Save to keep the upgrade.`,
     recovered: "Recovered unsaved changes. Save to keep them.",
   },
 
   confirm: {
     discardChanges: "Discard unsaved changes?",
+    replaceFolderProject: (folder: string) =>
+      `"${folder}" already contains a GameDevTool project. Replace it with this project? Other files in the folder are not touched.`,
+    overwriteChanged: (count: number, example: string) =>
+      `${count === 1 ? "A file was" : `${count} files were`} changed outside GameDevTool since the project was opened (for example by Git): ${example}${count > 1 ? ", …" : ""}\n\nOverwrite with your version?`,
     deleteAsset: (name: string) => `Delete "${name}"?`,
     deleteReferenced: (name: string, count: number) =>
       `Delete "${name}"? ${count} ${count === 1 ? "reference" : "references"} to it will break. You can undo this.`,
@@ -66,6 +85,8 @@ export const en = {
     kind: "Type",
     id: "ID",
     schemaVersion: "Schema version",
+    location: "Location",
+    locationFolder: (folder: string) => `${folder} (folder)`,
     assetCount: "Assets",
     usedBy: "Used by",
     references: (n: number) => `${n} ${n === 1 ? "reference" : "references"}`,
@@ -124,8 +145,20 @@ export const en = {
     "missing-migration": "This project's schema version cannot be upgraded.",
     "migration-failed": "Upgrading this project failed.",
     schema: "The project file is damaged or invalid.",
+    "no-project": "This folder does not contain a GameDevTool project (gamedevtool.json is missing).",
+    "too-many-files": "The folder contains too many asset files.",
+    "asset-file-mismatch": "An asset file's name does not match the asset id inside it (was it copied or renamed?).",
   } as Record<string, string>,
+  inFile: (file: string) => `File: ${file}`,
   openFailed: (reason: string) => `Could not open the file. ${reason}`,
+  openFolderFailed: (reason: string) => `Could not open the folder. ${reason}`,
+
+  saveErrors: {
+    permission: "Permission to write to the folder was denied.",
+    "duplicate-id": "Two assets share the same ID, so they cannot be saved as separate files. Fix the duplicate ID first.",
+    failed: (file: string, message: string) => `Could not write ${file || "the folder"} (${message}). Files written so far are kept; save again to retry.`,
+    folderUnavailable: (message: string) => `The folder could not be accessed (${message}).`,
+  },
 };
 
 export type UiStrings = typeof en;

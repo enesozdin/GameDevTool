@@ -47,7 +47,7 @@ app. It does not depend on any single engine.
     build/      Build script (esbuild API) → dist/GameDevTool.html
     tests/      Unit tests (mostly core)
     schema/     Published JSON Schema files
-    docs/       ROADMAP.md, DEPENDENCIES.md, expression language spec
+    docs/       ROADMAP.md, DEPENDENCIES.md, PROJECT_FORMAT.md, expression language spec
 
 ### 2.3 Data Model
 
@@ -87,7 +87,8 @@ Hosted mode adds two small files next to it: `manifest.json` and `sw.js`.
 
 **Persistence. The project file or folder is always the source of truth:**
 1. **Folder mode** (Chromium desktop): open a real project folder via the File System
-   Access API. One JSON file per asset, so it works directly with Git.
+   Access API. One JSON file per asset, so it works directly with Git. Layout and save
+   rules: [PROJECT_FORMAT.md](PROJECT_FORMAT.md).
 2. **Save / Open project file** (`.gdtproj` download/upload). **Always works**, on every
    browser and in both modes.
 3. **Autosave** to IndexedDB is **only a crash-recovery cache**, not storage:

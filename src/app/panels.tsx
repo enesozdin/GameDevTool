@@ -2,6 +2,7 @@ import type { Asset, Id, Issue, Project, ReferenceIndex } from "../core/index.ts
 import { isValidName } from "../core/index.ts";
 import { NameField } from "../ui/components/NameField.tsx";
 import type { UiStrings } from "../ui/strings.ts";
+import type { SaveTarget } from "./state.ts";
 
 const MAX_LISTED_ISSUES = 100;
 
@@ -17,13 +18,13 @@ export function incomingReferenceCount(index: ReferenceIndex, asset: Asset): num
 export interface ProjectPanelProps {
   readonly strings: UiStrings;
   readonly project: Project;
-  readonly fileName: string | null;
+  readonly target: SaveTarget | null;
   readonly issues: readonly Issue[];
   readonly onRename: (name: string) => void;
   readonly onSelectAsset: (id: Id) => void;
 }
 
-export function ProjectPanel({ strings, project, fileName, issues, onRename, onSelectAsset }: ProjectPanelProps) {
+export function ProjectPanel({ strings, project, target, issues, onRename, onSelectAsset }: ProjectPanelProps) {
   const s = strings.details;
   return (
     <>
@@ -42,10 +43,10 @@ export function ProjectPanel({ strings, project, fileName, issues, onRename, onS
           <dd>{project.manifest.schemaVersion}</dd>
           <dt>{s.assetCount}</dt>
           <dd>{project.assets.length}</dd>
-          {fileName !== null && (
+          {target !== null && (
             <>
-              <dt>{strings.toolbar.save}</dt>
-              <dd>{fileName}</dd>
+              <dt>{s.location}</dt>
+              <dd>{target.kind === "folder" ? s.locationFolder(target.name) : target.name}</dd>
             </>
           )}
         </dl>

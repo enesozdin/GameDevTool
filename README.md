@@ -9,8 +9,8 @@ export clean JSON/CSV to Unreal, Unity, Godot or a custom engine.
   security policy blocks network APIs and remote resources.
 - **Small, vetted dependency set.** Pinned versions, no automatic updates.
 
-**Status:** Phase 0 (Foundation) in progress. See [docs/ROADMAP.md](docs/ROADMAP.md) and
-[docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
+**Status:** Phase 0 (Foundation) in progress. See [docs/ROADMAP.md](docs/ROADMAP.md),
+[docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) and [docs/PROJECT_FORMAT.md](docs/PROJECT_FORMAT.md).
 
 ## Planned tools (MVP)
 - **Production Chain Editor**: node-based crafting and resource chains with typed

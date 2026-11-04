@@ -1,4 +1,4 @@
-import { DEFAULT_JSON_LIMITS, parseUntrustedJson, stableStringify, type JsonLimits, type JsonParseError } from "../json.ts";
+import { DEFAULT_JSON_LIMITS, parseUntrustedJson, stableStringify, type JsonLimits, type JsonParseError, type JsonValue } from "../json.ts";
 import { ProjectSchema, type Project } from "../model/project.ts";
 import { validateProject } from "../model/validate.ts";
 import { err, ok, type Issue, type Result } from "../result.ts";
@@ -35,8 +35,16 @@ const MAX_SCHEMA_ISSUES = 100;
 export function loadProject(text: string, options: LoadOptions = {}): Result<LoadedProject, LoadError> {
   const parsed = parseUntrustedJson(text, options.limits ?? DEFAULT_JSON_LIMITS);
   if (!parsed.ok) return parsed;
+  return loadProjectJson(parsed.value, options.migrations);
+}
 
-  const migrated = migrateProject(parsed.value, options.migrations ?? MIGRATIONS);
+/**
+ * The part of loading after parsing: migrate, schema-check (strips unknown keys), validate.
+ * `raw` must come from parseUntrustedJson (limits and forbidden keys already enforced) and
+ * is owned by this call: migrations may mutate it.
+ */
+export function loadProjectJson(raw: JsonValue, migrations: readonly Migration[] = MIGRATIONS): Result<LoadedProject, LoadError> {
+  const migrated = migrateProject(raw, migrations);
   if (!migrated.ok) return migrated;
 
   const result = ProjectSchema.safeParse(migrated.value.project);

@@ -35,6 +35,18 @@ export type JsonParseError =
  * that enforces the depth/value limits and rejects prototype-polluting keys.
  */
 export function parseUntrustedJson(text: string, limits: JsonLimits = DEFAULT_JSON_LIMITS): Result<JsonValue, JsonParseError> {
+  const parsed = parseUntrustedJsonCounted(text, limits);
+  return parsed.ok ? ok(parsed.value.value) : parsed;
+}
+
+/**
+ * parseUntrustedJson that also returns the number of values, so callers that assemble one
+ * document from several files (folder mode) can enforce one shared `maxValues` budget.
+ */
+export function parseUntrustedJsonCounted(
+  text: string,
+  limits: JsonLimits = DEFAULT_JSON_LIMITS,
+): Result<{ readonly value: JsonValue; readonly values: number }, JsonParseError> {
   if (text.length > limits.maxChars) {
     return err({ code: "too-large", limit: limits.maxChars, actual: text.length });
   }
@@ -75,7 +87,7 @@ export function parseUntrustedJson(text: string, limits: JsonLimits = DEFAULT_JS
     }
   }
 
-  return ok(root as JsonValue);
+  return ok({ value: root as JsonValue, values });
 }
 
 export function isJsonObject(value: unknown): value is JsonObject {
