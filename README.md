@@ -10,7 +10,8 @@ export clean JSON/CSV to Unreal, Unity, Godot or a custom engine.
 - **Small, vetted dependency set.** Pinned versions, no automatic updates.
 
 **Status:** Phase 0 (Foundation) in progress. See [docs/ROADMAP.md](docs/ROADMAP.md),
-[docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) and [docs/PROJECT_FORMAT.md](docs/PROJECT_FORMAT.md).
+[docs/DEPENDENCIES.md](docs/DEPENDENCIES.md), [docs/PROJECT_FORMAT.md](docs/PROJECT_FORMAT.md) and
+[docs/BROWSER_MATRIX.md](docs/BROWSER_MATRIX.md).
 
 ## Planned tools (MVP)
 - **Production Chain Editor**: node-based crafting and resource chains with typed
@@ -36,8 +37,9 @@ npm run check
 
 | Script | What it does |
 |---|---|
-| `npm run build` | Builds `dist/GameDevTool.html` (+ `.sha256`) and prints the bundle size report |
+| `npm run build` | Builds `dist/GameDevTool.html` (+ `.sha256`, `THIRD_PARTY_NOTICES.txt`) and prints the bundle size report |
 | `npm run typecheck` | Type-checks `src/core` (no DOM), `src/ui` + `src/app` (DOM), and build/tests (Node) |
 | `npm test` | Runs the unit tests with the Node test runner |
 | `npm run schema` | Regenerates `schema/project.v1.schema.json` from the zod schemas |
-| `npm run check` | typecheck + test + build |
+| `npm run check:lockfile` | Verifies every lockfile entry comes from the npm registry with sha512 integrity |
+| `npm run check` | lockfile check + typecheck + test + build |

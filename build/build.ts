@@ -2,6 +2,11 @@
  * Builds dist/GameDevTool.html: one self-contained file with all JS and CSS inlined and a
  * hash-based CSP. Reproducible: no timestamps, no absolute paths, same commit → same bytes.
  *
+ * Outputs (all in dist/):
+ *   GameDevTool.html          the app
+ *   GameDevTool.html.sha256   checksum, `sha256sum -c` compatible
+ *   THIRD_PARTY_NOTICES.txt   licenses of every package in the bundle
+ *
  * Usage: node build/build.ts
  */
 import { createHash } from "node:crypto";
@@ -11,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import * as esbuild from "esbuild";
 import { renderHtml } from "./html.ts";
+import { buildNotices, packageDirOf } from "./notices.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = path.join(root, "dist");
@@ -59,16 +65,19 @@ await writeFile(path.join(distDir, outFile), bytes);
 // `sha256sum -c` compatible.
 await writeFile(path.join(distDir, `${outFile}.sha256`), `${sha256}  ${outFile}\n`);
 
-// ---- Size report ----------------------------------------------------------------------
+// ---- Third-party notices + size report ------------------------------------------------
 const kb = (n: number): string => `${(n / 1024).toFixed(1)} KB`;
 const byPackage = new Map<string, number>();
+const packageDirs = new Set<string>();
 for (const output of Object.values(result.metafile.outputs)) {
   for (const [input, info] of Object.entries(output.inputs)) {
-    const match = /node_modules\/((?:@[^/]+\/)?[^/]+)/.exec(input);
-    const key = match?.[1] ?? "(own code)";
+    const dir = packageDirOf(input);
+    if (dir !== null && info.bytesInOutput > 0) packageDirs.add(dir);
+    const key = dir?.slice("node_modules/".length) ?? "(own code)";
     byPackage.set(key, (byPackage.get(key) ?? 0) + info.bytesInOutput);
   }
 }
+await writeFile(path.join(distDir, "THIRD_PARTY_NOTICES.txt"), await buildNotices(root, packageDirs));
 
 console.log(`dist/${outFile}`);
 console.log(`  size     ${kb(bytes.length)} (gzip ${kb(gzipSync(bytes, { level: 9 }).length)})`);

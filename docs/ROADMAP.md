@@ -14,6 +14,7 @@ app. It does not depend on any single engine.
 | Git-friendly | Stable key order, stable IDs, small diffs. |
 | Hardware efficient | Runs smoothly on low-end laptops, tablets and phones. |
 | Pragmatic dependencies | Proven libraries for hard problems; own code only where no trustworthy library exists or the code is small. Pinned versions, no automatic updates. See [DEPENDENCIES.md](DEPENDENCIES.md). |
+| Zero cost by default | Free tools and services only. Any step that costs money (paid services, plans, CI runners, quotas that could be exceeded) is raised with the developer before it is taken. See [CLAUDE.md](../CLAUDE.md). |
 
 ## 2. Architecture
 
@@ -103,7 +104,7 @@ Hosted mode adds two small files next to it: `manifest.json` and `sw.js`.
 - Workers are started from inlined code via Blob URLs. This requires `worker-src blob:`
   in the CSP (see 2.5).
 - Storage behaviour on local files differs between browsers. Phase 0 includes a test
-  matrix per browser to confirm what works.
+  matrix per browser to confirm what works: [BROWSER_MATRIX.md](BROWSER_MATRIX.md).
 
 ### 2.5 Security
 
