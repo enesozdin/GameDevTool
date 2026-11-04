@@ -1,0 +1,129 @@
+/* Inlined into the single HTML file; its hash is part of the CSP. System fonts only:
+   remote fonts are blocked by the CSP and would cost download time anyway. */
+:root {
+  color-scheme: light dark;
+  --bg: #f7f7f8;
+  --fg: #1b1b1f;
+  --muted: #5d5d66;
+  --surface: #ffffff;
+  --border: #d9d9de;
+  --accent: #2f5bd3;
+  --radius: 8px;
+  --gap: 16px;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141417;
+    --fg: #ececf1;
+    --muted: #a0a0ab;
+    --surface: #1e1e23;
+    --border: #34343c;
+    --accent: #8aa8ff;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+#root {
+  height: 100%;
+}
+
+.shell {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 100%;
+}
+
+.shell-header,
+.shell-footer {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gap);
+  padding: 12px var(--gap);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.shell-footer {
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.shell-title {
+  margin: 0;
+  font-size: 1.125rem;
+}
+
+.shell-version {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.shell-main {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: var(--gap);
+}
+
+.shell-main:focus {
+  outline: none;
+}
+
+.card {
+  padding: var(--gap);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.card h2 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 0;
+}
+
+.facts dt {
+  color: var(--muted);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

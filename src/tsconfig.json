@@ -1,0 +1,10 @@
+{
+  // UI (React components) and app shell (entry, storage adapters, workers).
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["es2024", "dom", "dom.iterable"],
+    "jsx": "react-jsx",
+    "types": ["react", "react-dom"]
+  },
+  "include": ["./ui/**/*", "./app/**/*"]
+}

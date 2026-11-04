@@ -1,0 +1,8 @@
+{
+  // Core must run in the browser, in workers and in Node: no DOM and no Node types.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["es2024"]
+  },
+  "include": ["./**/*.ts"]
+}

@@ -1,0 +1,225 @@
+{
+  "assets": [
+    {
+      "columns": [
+        {
+          "id": "01KDVDNA000000000000000008",
+          "name": "DisplayName",
+          "required": true,
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "01KDVDNA000000000000000009",
+          "name": "Weight",
+          "type": {
+            "kind": "float",
+            "min": 0
+          }
+        }
+      ],
+      "id": "01KDVDNA000000000000000007",
+      "kind": "table",
+      "name": "Items",
+      "rows": [
+        {
+          "cells": {
+            "01KDVDNA000000000000000008": {
+              "key": "item.iron_ore",
+              "source": "Iron Ore"
+            },
+            "01KDVDNA000000000000000009": 1
+          },
+          "id": "01KDVDNA00000000000000000A",
+          "name": "IronOre"
+        },
+        {
+          "cells": {
+            "01KDVDNA000000000000000008": {
+              "key": "item.iron_bar",
+              "source": "Iron Bar"
+            },
+            "01KDVDNA000000000000000009": 0.5
+          },
+          "id": "01KDVDNA00000000000000000B",
+          "name": "IronBar"
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "id": "01KDVDNA00000000000000000E",
+          "name": "Output",
+          "required": true,
+          "type": {
+            "kind": "reference",
+            "table": "01KDVDNA000000000000000007"
+          }
+        },
+        {
+          "id": "01KDVDNA00000000000000000F",
+          "name": "Inputs",
+          "type": {
+            "item": {
+              "kind": "reference",
+              "table": "01KDVDNA000000000000000007"
+            },
+            "kind": "list"
+          }
+        },
+        {
+          "id": "01KDVDNA00000000000000000G",
+          "name": "CycleSeconds",
+          "type": {
+            "kind": "float",
+            "min": 0
+          }
+        },
+        {
+          "id": "01KDVDNA00000000000000000H",
+          "name": "Tier",
+          "type": {
+            "kind": "int",
+            "max": 10,
+            "min": 1
+          }
+        },
+        {
+          "id": "01KDVDNA00000000000000000J",
+          "name": "Rarity",
+          "type": {
+            "kind": "enum",
+            "options": [
+              {
+                "id": "01KDVDNA00000000000000000C",
+                "name": "Common"
+              },
+              {
+                "id": "01KDVDNA00000000000000000D",
+                "name": "Rare"
+              }
+            ]
+          }
+        },
+        {
+          "id": "01KDVDNA00000000000000000K",
+          "name": "Automatable",
+          "type": {
+            "kind": "bool"
+          }
+        },
+        {
+          "id": "01KDVDNA00000000000000000M",
+          "name": "Yield",
+          "type": {
+            "kind": "curve"
+          }
+        },
+        {
+          "id": "01KDVDNA00000000000000000N",
+          "name": "Code",
+          "type": {
+            "kind": "string",
+            "maxLength": 16,
+            "unique": true
+          }
+        }
+      ],
+      "id": "01KDVDNA00000000000000000P",
+      "kind": "table",
+      "name": "Recipes",
+      "rows": [
+        {
+          "cells": {
+            "01KDVDNA00000000000000000E": "01KDVDNA00000000000000000B",
+            "01KDVDNA00000000000000000F": [
+              "01KDVDNA00000000000000000A",
+              "01KDVDNA00000000000000000A"
+            ],
+            "01KDVDNA00000000000000000G": 2.5,
+            "01KDVDNA00000000000000000H": 1,
+            "01KDVDNA00000000000000000J": "01KDVDNA00000000000000000C",
+            "01KDVDNA00000000000000000K": true,
+            "01KDVDNA00000000000000000M": {
+              "interp": "linear",
+              "keys": [
+                {
+                  "x": 1,
+                  "y": 1
+                },
+                {
+                  "x": 10,
+                  "y": 3
+                }
+              ]
+            },
+            "01KDVDNA00000000000000000N": "SMELT_IRON"
+          },
+          "id": "01KDVDNA00000000000000000Q",
+          "name": "SmeltIron"
+        }
+      ]
+    },
+    {
+      "id": "01KDVDNA00000000000000000R",
+      "kind": "document",
+      "markdown": "# Core loop\n\nMine, smelt, craft.\n",
+      "name": "Core Loop"
+    },
+    {
+      "id": "01KDVDNA00000000000000000S",
+      "kind": "document",
+      "markdown": "See [[Items/IronBar]].\n",
+      "name": "Crafting",
+      "parent": "01KDVDNA00000000000000000R"
+    }
+  ],
+  "manifest": {
+    "characters": [
+      {
+        "id": "01KDVDNA000000000000000006",
+        "name": "Blacksmith"
+      }
+    ],
+    "format": "gamedevtool.project",
+    "id": "01KDVDNA000000000000000000",
+    "name": "Sample",
+    "schemaVersion": 1,
+    "settings": {
+      "rateUnit": "minute",
+      "sourceLocale": "en"
+    },
+    "variables": [
+      {
+        "default": false,
+        "id": "01KDVDNA000000000000000003",
+        "name": "HasKey",
+        "type": "bool"
+      },
+      {
+        "default": 100,
+        "id": "01KDVDNA000000000000000004",
+        "name": "Gold",
+        "type": "int"
+      },
+      {
+        "default": "01KDVDNA000000000000000001",
+        "id": "01KDVDNA000000000000000005",
+        "name": "MainQuest",
+        "options": [
+          {
+            "id": "01KDVDNA000000000000000001",
+            "name": "QuestState"
+          },
+          {
+            "id": "01KDVDNA000000000000000002",
+            "name": "Done"
+          }
+        ],
+        "type": "enum"
+      }
+    ]
+  }
+}

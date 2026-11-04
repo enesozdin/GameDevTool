@@ -1,0 +1,35 @@
+{
+  "name": "gamedevtool",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Engine-agnostic, local-first toolkit for game designers. Ships as a single HTML file.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=26.13.0 <27"
+  },
+  "scripts": {
+    "build": "node build/build.ts",
+    "typecheck": "tsc -p src/core && tsc -p src && tsc -p .",
+    "test": "node --test \"tests/**/*.test.ts\"",
+    "schema": "node scripts/generate-schema.ts",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "@tanstack/react-table": "9.3.1",
+    "@tanstack/react-virtual": "3.14.21",
+    "@xyflow/react": "12.12.0",
+    "marked": "18.1.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "uplot": "1.6.32",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}
