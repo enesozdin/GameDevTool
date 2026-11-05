@@ -659,13 +659,19 @@ button.icon {
   white-space: nowrap;
 }
 
+/* The handle sits outside the port (left/right: -15px), so the port must not clip;
+   only the label text is cut with an ellipsis. */
 .pnode-port {
   position: absolute;
   max-width: 50%;
-  overflow: hidden;
   font-size: 0.75rem;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.pnode-port > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .pnode-port-in {
