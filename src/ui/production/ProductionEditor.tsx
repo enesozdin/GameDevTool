@@ -22,6 +22,8 @@ import {
   canConnect,
   compileCatalog,
   ConditionCompiler,
+  evaluateGates,
+  scenarioValues,
   compileNetwork,
   moveNodes,
   RATE_EPSILON,
@@ -37,6 +39,7 @@ import {
   type ProductionGraphAsset,
   type Project,
   type SolveMode,
+  type Value,
 } from "../../core/index.ts";
 import type { UiStrings } from "../strings.ts";
 import { ProductionContext, type ProductionView } from "./context.ts";
@@ -45,6 +48,7 @@ import { Inspector } from "./Inspector.tsx";
 import { DRAG_MIME, Library, type LibraryDrop } from "./Library.tsx";
 import { inHandle, outHandle, ProductionNode } from "./ProductionNode.tsx";
 import { Report } from "./Report.tsx";
+import { Scenario } from "./Scenario.tsx";
 import type { SimulationService } from "./simulation.ts";
 
 export interface ProductionEditorProps {
@@ -88,14 +92,21 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
   // structure, so they change identity only when one of these tables is edited.
   const catalog = useMemo(() => compileCatalog(project, graph.recipes, graph.items), [itemsAsset, recipesAsset, machinesAsset, graph.recipes, graph.items]);
   const network = useMemo(() => compileNetwork(graph, catalog), [graph, catalog]);
-  const result = useMemo(() => solveNetwork(network, mode), [network, mode]);
   // Variables change rarely; one compile cache per variable list.
-  const conditions = useMemo(() => new ConditionCompiler(project.manifest.variables), [project.manifest.variables]);
+  const variables = project.manifest.variables;
+  const conditions = useMemo(() => new ConditionCompiler(variables), [variables]);
+  // Scenario: what-if variable values for gates (start values + overrides), not saved.
+  const [overrides, setOverrides] = useState<ReadonlyMap<Id, Value>>(new Map());
+  const [allOpen, setAllOpen] = useState(false);
+  const values = useMemo(() => scenarioValues(conditions, variables, overrides), [conditions, variables, overrides]);
+  const gates = useMemo(() => evaluateGates(graph, catalog, conditions, values), [graph, catalog, conditions, values]);
+  const locked = allOpen || gates.lockedCount === 0 ? undefined : gates.locked;
+  const result = useMemo(() => solveNetwork(network, mode, { locked }), [network, mode, locked]);
   const nodesById = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph.nodes]);
 
   const view: ProductionView = useMemo(
-    () => ({ strings, catalog, network, result, unit, nodes: nodesById, bottlenecks: new Set(result.bottlenecks) }),
-    [strings, catalog, network, result, unit, nodesById],
+    () => ({ strings, catalog, network, result, unit, nodes: nodesById, bottlenecks: new Set(result.bottlenecks), gates: allOpen ? null : gates }),
+    [strings, catalog, network, result, unit, nodesById, allOpen, gates],
   );
 
   // ---- Nodes: local React Flow state (drag positions, measured sizes, selection),
@@ -271,7 +282,26 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
               onEdgeRatio={(id, ratio) => commit(setEdgeRatio(project, graph.id, id, ratio))}
               onDelete={() => deleteSelection(selectedNodes.map((n) => n.id), selectedEdges)}
             />
-            <Report strings={strings} project={project} graph={graph} catalog={catalog} network={network} result={result} unit={unit} selected={selectedNode} simulation={simulation} />
+            <Scenario
+              strings={strings}
+              variables={variables}
+              conditions={conditions}
+              gates={gates}
+              values={values}
+              overrides={overrides}
+              allOpen={allOpen}
+              onOverride={(id, value) =>
+                setOverrides((prev) => {
+                  const next = new Map(prev);
+                  if (value === undefined) next.delete(id);
+                  else next.set(id, value);
+                  return next;
+                })
+              }
+              onReset={() => setOverrides(new Map())}
+              onAllOpen={setAllOpen}
+            />
+            <Report strings={strings} project={project} graph={graph} catalog={catalog} network={network} result={result} unit={unit} selected={selectedNode} simulation={simulation} locked={locked} />
           </aside>
         </div>
       </div>

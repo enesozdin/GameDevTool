@@ -28,12 +28,14 @@ export interface ReportProps {
   readonly unit: RateUnit;
   readonly selected: GraphNode | undefined;
   readonly simulation: SimulationService;
+  /** Lock state of the current scenario (gates.ts); undefined = everything open. */
+  readonly locked: Uint8Array | undefined;
 }
 
 const SIM_RUNS = 2_000;
 const BOM_ROWS = 200;
 
-export function Report({ strings, project, graph, catalog, network: net, result, unit, selected, simulation }: ReportProps) {
+export function Report({ strings, project, graph, catalog, network: net, result, unit, selected, simulation, locked }: ReportProps) {
   const s = strings.production;
   const name = (id: Id) => catalog.items.get(id)?.name ?? s.unknownItem;
   const rate = (v: number) => formatRate(v, unit, s.perUnit);
@@ -104,7 +106,7 @@ export function Report({ strings, project, graph, catalog, network: net, result,
         </>
       )}
 
-      <MonteCarlo strings={strings} project={project} graph={graph} network={net} simulation={simulation} title={title} />
+      <MonteCarlo strings={strings} project={project} graph={graph} network={net} simulation={simulation} title={title} locked={locked} />
     </section>
   );
 }
@@ -141,6 +143,7 @@ function MonteCarlo({
   network,
   simulation,
   title,
+  locked,
 }: {
   strings: UiStrings;
   project: Project;
@@ -148,6 +151,7 @@ function MonteCarlo({
   network: Network;
   simulation: SimulationService;
   title: (u: number) => string;
+  locked: Uint8Array | undefined;
 }) {
   const s = strings.production;
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -159,13 +163,13 @@ function MonteCarlo({
   useEffect(() => {
     setOutcome(null);
     handle.current?.cancel();
-  }, [network]);
+  }, [network, locked]);
   useEffect(() => () => handle.current?.cancel(), []);
 
   const start = () => {
     handle.current?.cancel();
     const tables = project.assets.filter((a) => a.kind === "table" && a.role !== undefined);
-    const run = simulation.run({ graph, tables, options: { runs: SIM_RUNS, seconds: 3_600, seed: 1 } }, (done, total) => setProgress({ done, total }));
+    const run = simulation.run({ graph, tables, options: { runs: SIM_RUNS, seconds: 3_600, seed: 1, locked } }, (done, total) => setProgress({ done, total }));
     handle.current = run;
     setProgress({ done: 0, total: SIM_RUNS });
     void run.result.then((r) => {

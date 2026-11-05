@@ -326,7 +326,7 @@ ready after ~64 days.
 | Expression language: tokenizer, parser, type checker, closure compiler, spec ([EXPRESSIONS.md](EXPRESSIONS.md)) | ✅ |
 | Project variables editor (bool, int, float, string, enum); renames rewrite conditions | ✅ |
 | Gate conditions (live errors in the inspector) and "used before unlocked" validation | ✅ |
-| Gates in the solver / Monte Carlo (evaluate conditions against variable values) | ⏳ |
+| Gates in the solver / Monte Carlo: conditions evaluated against a scenario of variable values, locked nodes run at 0 | ✅ |
 | Recipe choice per item in the calculator UI; phone rate-calculator view | ⏳ |
 | Creating enum / reference / list / stacks columns from the UI | ⏳ |
 | Monte Carlo histograms (uPlot) | ⏳ |

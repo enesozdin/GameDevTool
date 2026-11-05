@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { Catalog, GraphNode, Id, Network, SolveResult } from "../../core/index.ts";
+import type { Catalog, GateState, GraphNode, Id, Network, SolveResult } from "../../core/index.ts";
 import type { UiStrings } from "../strings.ts";
 import type { RateUnit } from "./format.ts";
 
@@ -15,6 +15,8 @@ export interface ProductionView {
   readonly unit: RateUnit;
   readonly nodes: ReadonlyMap<Id, GraphNode>;
   readonly bottlenecks: ReadonlySet<number>;
+  /** Gate evaluation for the current scenario; null when all gates are treated as open. */
+  readonly gates: GateState | null;
 }
 
 export const ProductionContext = createContext<ProductionView | null>(null);

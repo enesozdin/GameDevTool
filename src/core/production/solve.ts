@@ -17,6 +17,10 @@
  *   connections.
  * - Several connections out of one output share the supply by their `ratio` (default 1).
  *
+ * Locked nodes (closed gates, recipes whose unlock condition is false) run at 0 in both
+ * modes: in target mode their consumers show the unmet demand as a deficit, in supply mode
+ * they are the limit (and the bottleneck) of everything downstream.
+ *
  * Loops are solved iteratively (Gauss-Seidel sweeps) until flows settle. A loop that
  * amplifies itself never settles; `converged` is then false.
  */
@@ -36,6 +40,8 @@ export const Limit = {
   source: 3,
   /** Recipe without a valid cycle time, or without outputs. */
   invalid: 4,
+  /** A closed gate or a recipe whose unlock condition is false (`SolveOptions.locked`). */
+  locked: 5,
 } as const;
 
 export interface SolveOptions {
@@ -46,6 +52,8 @@ export interface SolveOptions {
   readonly sourceRate?: Float64Array;
   /** Supply mode: multiplies output port coefficients (Monte Carlo chance outcomes). */
   readonly outScale?: Float64Array;
+  /** Per node: 1 = locked (closed gate, locked recipe); the node runs at 0. See gates.ts. */
+  readonly locked?: Uint8Array;
 }
 
 export interface SolveResult {
@@ -91,7 +99,7 @@ export function solveNetwork(net: Network, mode: SolveMode, options: SolveOption
   let converged = false;
   while (sweeps < maxSweeps) {
     sweeps++;
-    const change = mode === "target" ? sweepTarget(net, edgeFlow, claim, activity) : sweepSupply(net, edgeFlow, activity, limit, limitPort, options);
+    const change = mode === "target" ? sweepTarget(net, edgeFlow, claim, activity, options.locked) : sweepSupply(net, edgeFlow, activity, limit, limitPort, options);
     if (!Number.isFinite(change)) break;
     if (change <= tolerance) {
       converged = true;
@@ -161,15 +169,20 @@ function freeSupply(net: Network, flow: Float64Array, activity: Float64Array, e:
 }
 
 /** Largest relative change of any edge flow in this sweep. */
-function sweepTarget(net: Network, flow: Float64Array, claim: Float64Array, activity: Float64Array): number {
+function sweepTarget(net: Network, flow: Float64Array, claim: Float64Array, activity: Float64Array, locked: Uint8Array | undefined): number {
   let change = 0;
   const { topo, kind, outStart, inStart, outEdgeStart, outEdges, inEdgeStart, inEdges, outCoef, inCoef, edgeSource, component } = net;
+  // Locked suppliers deliver nothing; the demand goes to the others, and if there are none
+  // it stays unmet (a deficit at the consumer).
+  const isLocked = (e: number) => locked !== undefined && locked[edgeSource[e]!] === 1;
   // Consumers first: walk the producer-first order backwards.
   for (let t = topo.length - 1; t >= 0; t--) {
     const u = topo[t]!;
     const isRecipe = kind[u] === NodeKind.recipe;
     let a = 0;
-    if (kind[u] === NodeKind.sink) {
+    if (locked !== undefined && locked[u] === 1) {
+      // Runs at 0: asks nothing of its inputs.
+    } else if (kind[u] === NodeKind.sink) {
       const r = net.rate[u]!;
       a = Number.isNaN(r) ? 0 : r;
     } else {
@@ -193,23 +206,26 @@ function sweepTarget(net: Network, flow: Float64Array, claim: Float64Array, acti
       let need = a * inCoef[q]!;
       // 1. Surplus from producers in the same loop (by-products, catalysts).
       let external = 0;
+      let open = 0;
       for (let k = lo; k < hi; k++) {
         const e = inEdges[k]!;
+        const off = isLocked(e);
+        if (!off) open++;
         if (component[edgeSource[e]!] !== component[u]) {
-          external++;
+          if (!off) external++;
           continue;
         }
-        const c = Math.min(need, freeSupply(net, flow, activity, e, 0));
+        const c = off ? 0 : Math.min(need, freeSupply(net, flow, activity, e, 0));
         need -= c;
         change = Math.max(change, rel(claim[e]!, c));
         claim[e] = c;
       }
-      // 2. The rest, evenly over connections from outside the loop (or all, if none).
-      const share = need / (external > 0 ? external : hi - lo);
+      // 2. The rest, evenly over open connections from outside the loop (or all open ones).
+      const share = open === 0 ? 0 : need / (external > 0 ? external : open);
       for (let k = lo; k < hi; k++) {
         const e = inEdges[k]!;
         const inLoop = component[edgeSource[e]!] === component[u];
-        const next = claim[e]! + (external === 0 || !inLoop ? share : 0);
+        const next = isLocked(e) ? 0 : claim[e]! + (external === 0 || !inLoop ? share : 0);
         change = Math.max(change, rel(flow[e]!, next));
         flow[e] = next;
       }
@@ -235,7 +251,10 @@ function sweepSupply(
     let lim: number = Limit.none;
     let limPort = -1;
     const k0 = kind[u]!;
-    if (k0 === NodeKind.source) {
+    if (options.locked !== undefined && options.locked[u] === 1) {
+      a = 0;
+      lim = Limit.locked;
+    } else if (k0 === NodeKind.source) {
       const override = options.sourceRate?.[u];
       a = override !== undefined && !Number.isNaN(override) ? override : net.rate[u]!;
       lim = Limit.source;
@@ -367,7 +386,7 @@ function report(
 /**
  * From each sink, follows the limiting input upstream (through the connection that brings
  * the most of it) until a node that limits itself: a source, a recipe capped by machines,
- * an input nothing supplies, or a loop.
+ * an input nothing supplies, a locked node, or a loop.
  */
 function findBottlenecks(net: Network, flow: Float64Array, limit: Uint8Array, limitPort: Int32Array): number[] {
   const found = new Set<number>();

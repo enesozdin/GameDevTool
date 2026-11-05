@@ -1,6 +1,6 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { memo, type ReactNode } from "react";
-import { Limit, NodeKind, RATE_EPSILON } from "../../core/index.ts";
+import { GateStatus, Limit, NodeKind, RATE_EPSILON } from "../../core/index.ts";
 import { itemName, nodeTitle, useProductionView } from "./context.ts";
 import { formatNumber, formatRate } from "./format.ts";
 
@@ -32,11 +32,14 @@ export const ProductionNode = memo(function ProductionNode({ id, selected }: Nod
   const deficit = result.nodeDeficit[index]!;
   const isBottleneck = view.bottlenecks.has(index);
   const machines = result.machines[index]!;
+  const gate = view.gates?.status[index] ?? GateStatus.none;
+  const isLocked = gate === GateStatus.closed || gate === GateStatus.error;
 
   const classes = ["pnode", `pnode-${node.type}`];
   if (selected) classes.push("is-selected");
   if (deficit > RATE_EPSILON) classes.push("has-deficit");
   if (isBottleneck) classes.push("is-bottleneck");
+  if (isLocked) classes.push("is-locked");
 
   let status: string | null = null;
   if (net.kind[index] === NodeKind.recipe && !Number.isNaN(machines)) status = s.machines(formatNumber(machines), Math.ceil(machines - 1e-9));
@@ -68,6 +71,8 @@ export const ProductionNode = memo(function ProductionNode({ id, selected }: Nod
       <div className="pnode-foot">
         {status !== null && <span>{status}</span>}
         {deficit > RATE_EPSILON && <span className="pnode-bad">{s.deficit(formatRate(deficit, unit, s.perUnit))}</span>}
+        {isLocked && <span className="pnode-bad">{gate === GateStatus.error ? s.gateError : node.type === "gate" ? s.gateClosed : s.recipeLocked}</span>}
+        {gate === GateStatus.open && node.type === "gate" && <span className="muted">{s.gateOpen}</span>}
         {isBottleneck && <span className="pnode-bad">{s.bottleneck}</span>}
         {limitText !== null && <span className="muted">{limitText}</span>}
       </div>

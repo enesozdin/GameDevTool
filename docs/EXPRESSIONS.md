@@ -119,6 +119,22 @@ Run-time errors stop the evaluation and return an error instead of a value:
 | Gate node condition (production chain) | bool | Warning: gate has no condition. |
 | Recipe `Gate` column (unlock condition) | bool | Always unlocked. |
 
+### Gates in the calculation
+
+The production chain is calculated with a **scenario**: every variable at its start
+value, unless the designer changes it in the editor's Scenario panel (a what-if; it is not
+saved). Against these values:
+
+- a gate node whose condition is false passes nothing;
+- a recipe whose unlock condition is false does not run;
+- a condition with an error (compile or run time) counts as false.
+
+Locked nodes run at 0 in both calculation modes and in every Monte Carlo run. In
+target-driven mode the demand moves to the other, open suppliers of the same input; if
+there are none, the consumer shows a deficit. In supply-driven mode the locked node is the
+limit, and the bottleneck, of everything downstream. "Treat all gates as open" calculates
+the chain as if everything were unlocked.
+
 ### Unlock order check
 
 The production chain validation warns when a recipe **can be unlocked before one of

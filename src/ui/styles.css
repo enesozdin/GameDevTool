@@ -554,6 +554,7 @@ button.icon {
 
 .plib,
 .pinspector,
+.pscenario,
 .preport {
   display: flex;
   flex-direction: column;
@@ -627,6 +628,11 @@ button.icon {
 .pnode.has-deficit,
 .pnode.is-bottleneck {
   border-color: var(--danger);
+}
+
+.pnode.is-locked {
+  border-style: dashed;
+  opacity: 0.75;
 }
 
 .pnode-source { border-left: 4px solid #3a9d5d; }
@@ -824,4 +830,11 @@ button.icon {
 
 .tgrid-empty {
   padding: 12px;
+}
+
+label.check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 32px;
 }

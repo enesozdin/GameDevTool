@@ -8,6 +8,10 @@ import {
   commit,
   compileCatalog,
   compileNetwork,
+  ConditionCompiler,
+  evaluateGates,
+  GateStatus,
+  scenarioValues,
   createEmptyProject,
   createHistory,
   createProductionSample,
@@ -351,5 +355,114 @@ describe("gates and unlocks", () => {
     // Ungated recipes are never reported.
     setGate("ForgeIronSword", "");
     assert.equal(codes(project, "used-before-unlocked").length, 0);
+  });
+});
+
+describe("gates in the solver and Monte Carlo", () => {
+  function setup() {
+    const s = sample();
+    const newId = fixedIds(1_850_000_000_000);
+    const level = { id: newId(), name: "Level", type: "int" as const, default: 1 };
+    s.project.manifest.variables.push(level);
+    const gateCol = (s.recipes.role as { gate: Id }).gate;
+    s.recipes.rows.find((r) => r.name === "ForgeIronSword")!.cells[gateCol] = "Level >= 3";
+    const evaluate = (overrides: Map<Id, number> = new Map()) => {
+      const catalog = compileCatalog(s.project, s.graph.recipes, s.graph.items);
+      const net = compileNetwork(s.graph, catalog);
+      const conditions = new ConditionCompiler(s.project.manifest.variables);
+      const gates = evaluateGates(s.graph, catalog, conditions, scenarioValues(conditions, s.project.manifest.variables, overrides));
+      return { net, gates };
+    };
+    const forge = nodeOf(s.graph, (n) => n.type === "recipe" && n.recipe === recipeId(s.recipes, "ForgeIronSword"));
+    const swordSink = nodeOf(s.graph, (n) => n.type === "sink" && n.item === itemId(s.items, "IronSword"));
+    return { ...s, level, evaluate, forge, swordSink, newId };
+  }
+
+  it("locks recipes whose unlock condition is false", () => {
+    const { evaluate, forge, swordSink, level } = setup();
+    let { net, gates } = evaluate();
+    assert.equal(gates.status[forge], GateStatus.closed);
+    assert.equal(gates.lockedCount, 1);
+    assert.deepEqual(gates.slots, [0]);
+
+    const supply = solveNetwork(net, "supply", { locked: gates.locked });
+    assert.equal(supply.activity[swordSink], 0);
+    assert.equal(supply.limit[forge], Limit.locked);
+    assert.ok(supply.bottlenecks.includes(forge));
+
+    // Target mode: the sink's demand is unmet, nothing is asked upstream.
+    const target = solveNetwork(net, "target", { locked: gates.locked });
+    assert.equal(target.activity[forge], 0);
+    assert.ok(target.nodeDeficit[swordSink]! > 0);
+    assert.ok(target.activity.every((a, u) => net.kind[u] === 3 || a === 0));
+
+    ({ net, gates } = evaluate(new Map([[level.id, 3]])));
+    assert.equal(gates.status[forge], GateStatus.open);
+    close(solveNetwork(net, "target", { locked: gates.locked }).activity[swordSink]!, 1 / 60);
+  });
+
+  it("closes gate nodes; broken conditions count as closed", () => {
+    const { graph, evaluate, swordSink, level, newId } = setup();
+    // Put a gate in front of the sword sink.
+    const edgeIndex = graph.edges.findIndex((e) => e.target === graph.nodes[swordSink]!.id);
+    const edge = graph.edges[edgeIndex]!;
+    const gate: GraphNode = { id: newId(), type: "gate", position: { x: 0, y: 0 }, item: edge.item, condition: "Level > 5" };
+    graph.nodes.push(gate);
+    graph.edges.splice(edgeIndex, 1, { ...edge, target: gate.id }, { ...edge, id: newId(), source: gate.id });
+    const g = graph.nodes.length - 1;
+
+    let { net, gates } = evaluate(new Map([[level.id, 4]]));
+    assert.equal(gates.status[g], GateStatus.closed);
+    assert.equal(solveNetwork(net, "supply", { locked: gates.locked }).activity[swordSink], 0);
+
+    ({ net, gates } = evaluate(new Map([[level.id, 9]])));
+    assert.equal(gates.status[g], GateStatus.open);
+    assert.ok(solveNetwork(net, "supply", { locked: gates.locked }).activity[swordSink]! > 0);
+
+    (gate as { condition: string }).condition = "Level / 0 > 1";
+    assert.equal(evaluate().gates.status[g], GateStatus.error);
+    (gate as { condition: string }).condition = "Levle > 1";
+    assert.equal(evaluate().gates.status[g], GateStatus.error);
+    (gate as { condition: string }).condition = "";
+    assert.equal(evaluate().gates.status[g], GateStatus.open);
+    // Overrides of the wrong type are ignored.
+    assert.equal(evaluate(new Map([[level.id, Number.NaN]])).gates.status[g], GateStatus.open);
+  });
+
+  it("sends demand to the open suppliers of an input", () => {
+    const { graph, evaluate, level, newId, items } = setup();
+    const coal = itemId(items, "Coal");
+    const smelt = graph.nodes.find((n) => n.type === "recipe" && n.recipe === recipeId(sample().recipes, "SmeltIronBar"))!;
+    const extra: GraphNode = { id: newId(), type: "source", position: { x: 0, y: 0 }, item: coal, rate: 0 };
+    const gate: GraphNode = { id: newId(), type: "gate", position: { x: 0, y: 0 }, item: coal, condition: "Level >= 2" };
+    graph.nodes.push(extra, gate);
+    graph.edges.push({ id: newId(), source: extra.id, target: gate.id, item: coal }, { id: newId(), source: gate.id, target: smelt.id, item: coal });
+    const viaGate = graph.edges.length - 1;
+    const direct = graph.edges.findIndex((e) => e.item === coal && e.target === smelt.id && e.source !== gate.id);
+    // Unlock the sword recipe so there is demand.
+    const run = (lv: number) => {
+      const { net, gates } = evaluate(new Map([[level.id, lv]]));
+      return solveNetwork(net, "target", { locked: gates.locked });
+    };
+    // Level 3: both coal suppliers are open and share the demand.
+    let r = run(3);
+    close(r.edgeFlow[viaGate]!, r.edgeFlow[direct]!);
+    // Lock only the gate.
+    (gate as { condition: string }).condition = "Level >= 9";
+    r = run(3);
+    assert.equal(r.edgeFlow[viaGate], 0);
+    close(r.edgeFlow[direct]!, 3 / 60);
+  });
+
+  it("applies locks in every Monte Carlo run", () => {
+    const { evaluate, swordSink } = setup();
+    const { net, gates } = evaluate();
+    const options = { runs: 50, seconds: 3600, seed: 7, locked: gates.locked };
+    const state = startMonteCarlo(net, options);
+    while (!stepMonteCarlo(net, state, options, 20));
+    const percentiles = monteCarloPercentiles(state);
+    assert.equal(percentiles[[...state.sinks].indexOf(swordSink)]!.p90, 0);
+    // Slag still comes out of the unlocked smelter.
+    assert.ok(percentiles.some((p) => p.mean > 0));
   });
 });

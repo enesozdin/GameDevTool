@@ -9,6 +9,9 @@
  * The supply-driven solver then turns those effective rates into sink output. Using the
  * deterministic cycle count is an approximation: upstream randomness changes c slightly,
  * which only matters for long chains of chance outputs.
+ *
+ * Gates are evaluated once per simulation (one scenario of variable values): a locked node
+ * yields nothing in every run.
  */
 import { createRandom, sampleBinomial, samplePoisson, type Random } from "../random.ts";
 import type { Network } from "./network.ts";
@@ -20,6 +23,8 @@ export interface MonteCarloOptions {
   /** Length of one simulated period in seconds (e.g. 3600 for "per hour"). */
   readonly seconds: number;
   readonly seed: number;
+  /** Per node: 1 = locked by a gate (see gates.ts). Same lock state in every run. */
+  readonly locked?: Uint8Array;
 }
 
 export interface MonteCarloState {
@@ -57,7 +62,7 @@ export function startMonteCarlo(net: Network, options: MonteCarloOptions): Monte
   for (let u = 0; u < net.nodeCount; u++) if (net.kind[u] === NodeKind.sink) sinks.push(u);
   return {
     random: createRandom(options.seed),
-    base: solveNetwork(net, "supply"),
+    base: solveNetwork(net, "supply", { locked: options.locked }),
     sinks: Int32Array.from(sinks),
     samples: new Float64Array(runs * sinks.length),
     done: 0,
@@ -89,7 +94,7 @@ export function stepMonteCarlo(net: Network, state: MonteCarloState, options: Mo
         outScale[p] = sampleBinomial(state.random, cycles, chance) / (cycles * chance);
       }
     }
-    const result = solveNetwork(net, "supply", { sourceRate, outScale, maxSweeps: 200 });
+    const result = solveNetwork(net, "supply", { sourceRate, outScale, maxSweeps: 200, locked: options.locked });
     for (let s = 0; s < state.sinks.length; s++) {
       state.samples[run * state.sinks.length + s] = result.activity[state.sinks[s]!]! * seconds;
     }

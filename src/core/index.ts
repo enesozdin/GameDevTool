@@ -31,3 +31,4 @@ export * from "./production/starter.ts";
 export * from "./production/edits.ts";
 export * from "./production/validate-graph.ts";
 export * from "./production/unlocks.ts";
+export * from "./production/gates.ts";
