@@ -43,6 +43,14 @@ The Production Chain Editor stores its data in ordinary assets:
   its type removes values that no longer fit. Engine exports ignore it. Adding the field was
   backward compatible (schema version 1).
 
+- **`calculator`** (optional, on `production-graph` assets): rate calculator settings,
+  `{ "target": "<item row id>", "rate": 0.0167, "recipes": { "<item row id>": "<recipe row id>" } }`.
+  `rate` is in items per second. `recipes` picks the recipe that makes an item when several
+  recipes output it; items not listed use the first such recipe (table order). The ids are
+  indexed as references ("used by", broken links); a choice whose recipe no longer outputs
+  its item is a warning and is ignored. Unset keys and an empty object are left out.
+  Engine exports ignore it. Adding the field was backward compatible (schema version 1).
+
 - **`groups`** (optional, on `production-graph` assets): sub-chains,
   `[{ "id": "<ULID>", "label": "Smelting", "parent": "<group id>", "collapsed": true }]`.
   A node joins a group with its optional `group` field. Groups nest through `parent` (at

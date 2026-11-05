@@ -327,7 +327,7 @@ ready after ~64 days.
 | Project variables editor (bool, int, float, string, enum); renames rewrite conditions | ✅ |
 | Gate conditions (live errors in the inspector) and "used before unlocked" validation | ✅ |
 | Gates in the solver / Monte Carlo: conditions evaluated against a scenario of variable values, locked nodes run at 0 | ✅ |
-| Recipe choice per item in the calculator UI; phone rate-calculator view | ⏳ |
+| Rate calculator view: target item + rate, recipe choice per item (saved with the chain, also used by the bill of materials), machines, raw totals; default view on phones | ✅ |
 | Creating enum / reference / list / stacks columns from the UI | ⏳ |
 | Monte Carlo histograms (uPlot) | ⏳ |
 

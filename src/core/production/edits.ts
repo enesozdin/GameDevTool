@@ -6,7 +6,7 @@ import type { Change, Patch } from "../history.ts";
 import type { Id } from "../model/primitives.ts";
 import type { Asset, Project } from "../model/project.ts";
 import { MAX_ASSETS } from "../model/project.ts";
-import { GRAPH_LIMITS, type GraphEdge, type GraphGroup, type GraphNode, type Position, type ProductionGraphAsset, type Scenario } from "../model/production-graph.ts";
+import { GRAPH_LIMITS, type GraphEdge, type GraphGroup, type GraphNode, type Position, type ProductionGraphAsset, type Scenario, type Calculator } from "../model/production-graph.ts";
 import { keyAccepts, stackKey, type Catalog } from "./catalog.ts";
 import { containerOf, descendantGroups, descendantNodes, groupStructure } from "./groups.ts";
 
@@ -299,4 +299,55 @@ export function resetScenario(project: Project, graphId: Id): Change | null {
   const at = graphAt(project, graphId);
   if (at === null || at.graph.scenario === undefined || Object.keys(at.graph.scenario.values).length === 0) return null;
   return setScenario(at.index, { ...at.graph.scenario, values: {} }, "reset-scenario");
+}
+
+// ---------------------------------------------------------------------------------------
+// Rate calculator settings (target, rate, recipe choice per item; see calculator.ts)
+// ---------------------------------------------------------------------------------------
+
+/** Empty settings are stored as no field at all; unset keys are left out. */
+function setCalculator(index: number, next: Calculator, label: string, coalesceKey?: string): Change {
+  const value: { target?: Id; rate?: number; recipes?: Record<Id, Id> } = {};
+  if (next.target !== undefined) value.target = next.target;
+  if (next.rate !== undefined) value.rate = next.rate;
+  if (next.recipes !== undefined && Object.keys(next.recipes).length > 0) value.recipes = next.recipes;
+  const change: Change = { label, patches: [{ op: "set", path: ["assets", index, "calculator"], value: Object.keys(value).length === 0 ? undefined : value }] };
+  return coalesceKey === undefined ? change : { ...change, coalesceKey };
+}
+
+/** Sets the item the calculator plans for and its wanted rate (items/s). */
+export function setCalculatorTarget(project: Project, graphId: Id, target: Id | undefined, rate: number | undefined): Change | null {
+  const at = graphAt(project, graphId);
+  if (at === null) return null;
+  if (rate !== undefined && !(Number.isFinite(rate) && rate >= 0 && rate <= GRAPH_LIMITS.rate)) return null;
+  const prev = at.graph.calculator ?? {};
+  if (prev.target === target && prev.rate === rate) return null;
+  // Typing a rate is one undo step per target; picking another target is its own step.
+  const coalesce = prev.target === target ? `calculator-rate:${graphId}` : undefined;
+  return setCalculator(at.index, { ...prev, target, rate }, "edit-calculator", coalesce);
+}
+
+/**
+ * Chooses the recipe that makes `item` in the calculator; `undefined` goes back to the
+ * default (the first recipe that outputs the item). A recipe must output the item.
+ */
+export function setCalculatorRecipe(project: Project, graphId: Id, catalog: Catalog, item: Id, recipe: Id | undefined): Change | null {
+  const at = graphAt(project, graphId);
+  if (at === null) return null;
+  if (recipe !== undefined && catalog.recipes.get(recipe)?.outputs.some((o) => o.item === item) !== true) return null;
+  const prev = at.graph.calculator ?? {};
+  const had = prev.recipes !== undefined && Object.hasOwn(prev.recipes, item);
+  if (recipe === undefined ? !had : had && prev.recipes![item] === recipe) return null;
+  const recipes = { ...prev.recipes };
+  if (recipe === undefined) delete recipes[item];
+  else recipes[item] = recipe;
+  return setCalculator(at.index, { ...prev, recipes }, "edit-calculator");
+}
+
+/** Clears every recipe choice (all items back to their first recipe). */
+export function resetCalculatorRecipes(project: Project, graphId: Id): Change | null {
+  const at = graphAt(project, graphId);
+  const recipes = at?.graph.calculator?.recipes;
+  if (at === null || recipes === undefined || Object.keys(recipes).length === 0) return null;
+  return setCalculator(at.index, { ...at.graph.calculator, recipes: {} }, "edit-calculator");
 }

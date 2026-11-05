@@ -103,6 +103,21 @@ export const ScenarioSchema = z.object({
 export type Scenario = z.infer<typeof ScenarioSchema>;
 
 /**
+ * Rate calculator settings of a chain (production/calculator.ts): the item to plan for,
+ * the wanted rate, and which recipe makes an item when several recipes output it.
+ * Editor-only: engine exports ignore it.
+ */
+export const CalculatorSchema = z.object({
+  /** Item row (items table) the calculator plans for. */
+  target: z.optional(IdSchema),
+  /** Wanted items per second of the target. */
+  rate: z.optional(rate),
+  /** Item id → recipe id. Items not listed use the first recipe (table order) that makes them. */
+  recipes: z.optional(z.record(IdSchema, IdSchema)),
+});
+export type Calculator = z.infer<typeof CalculatorSchema>;
+
+/**
  * A sub-chain (IDEF0 hierarchical decomposition). Groups only organize the canvas: the
  * calculation always runs on the flat node list. A collapsed group is drawn as one node
  * whose ports are the connections crossing its boundary. Groups nest through `parent`.
@@ -131,6 +146,7 @@ export const ProductionGraphAssetSchema = z.object({
   /** Sub-chains; stored only when the chain has any. */
   groups: z.optional(z.array(GraphGroupSchema).check(z.maxLength(GRAPH_LIMITS.groups))),
   scenario: z.optional(ScenarioSchema),
+  calculator: z.optional(CalculatorSchema),
 });
 export type ProductionGraphAsset = z.infer<typeof ProductionGraphAssetSchema>;
 

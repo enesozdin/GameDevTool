@@ -26,16 +26,38 @@ export function inputItem(choice: RecipeChoice, stack: Stack): Id {
   return items.find((id) => choice.has(id)) ?? items[0]!;
 }
 
-export function defaultRecipeChoice(catalog: Catalog, overrides: ReadonlyMap<Id, Id> = new Map()): Map<Id, CatalogRecipe> & { readonly tagged: ReadonlyMap<string, readonly Id[]> } {
+/**
+ * Recipe per item: the first recipe (table order) that outputs it, unless `overrides`
+ * (item id → recipe id, e.g. a graph's saved calculator choices) picks another. Overrides
+ * naming a missing recipe, or one that does not output the item, are ignored.
+ */
+export function defaultRecipeChoice(
+  catalog: Catalog,
+  overrides: ReadonlyMap<Id, Id> | Readonly<Record<Id, Id>> = new Map(),
+): Map<Id, CatalogRecipe> & { readonly tagged: ReadonlyMap<string, readonly Id[]> } {
   const choice = Object.assign(new Map<Id, CatalogRecipe>(), { tagged: catalog.tagged });
   for (const recipe of catalog.recipes.values()) {
     for (const out of recipe.outputs) if (!choice.has(out.item)) choice.set(out.item, recipe);
   }
-  for (const [item, recipeId] of overrides) {
+  const entries = overrides instanceof Map ? overrides.entries() : Object.entries(overrides as Readonly<Record<Id, Id>>);
+  for (const [item, recipeId] of entries) {
     const recipe = catalog.recipes.get(recipeId);
     if (recipe !== undefined && recipe.outputs.some((o) => o.item === item)) choice.set(item, recipe);
   }
   return choice;
+}
+
+/** Item → every recipe that outputs it, in table order (alternatives for the calculator). */
+export function producersByItem(catalog: Catalog): Map<Id, CatalogRecipe[]> {
+  const producers = new Map<Id, CatalogRecipe[]>();
+  for (const recipe of catalog.recipes.values()) {
+    for (const out of recipe.outputs) {
+      const list = producers.get(out.item);
+      if (list === undefined) producers.set(out.item, [recipe]);
+      else if (list[list.length - 1] !== recipe) list.push(recipe);
+    }
+  }
+  return producers;
 }
 
 export interface RateLine {

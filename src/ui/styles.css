@@ -544,7 +544,9 @@ button.icon {
 }
 
 .pside h3,
-.preport h4 {
+.preport h4,
+.pcalc h3,
+.pcalc h4 {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -555,7 +557,8 @@ button.icon {
 .plib,
 .pinspector,
 .pscenario,
-.preport {
+.preport,
+.pcalc {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -804,6 +807,97 @@ button.icon {
 .ptable th[scope="row"],
 .ptable th:first-child {
   text-align: left;
+}
+
+/* Rate calculator: item picker beside the target on wide screens, stacked on phones. */
+.pcalc {
+  min-width: 0;
+}
+
+.pcalc-pick {
+  display: grid;
+  grid-template-columns: minmax(200px, 320px) 1fr;
+  gap: 12px;
+}
+
+.pcalc-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pcalc-items .listbox {
+  height: 240px;
+  flex: 0 0 auto;
+}
+
+.pcalc-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.pcalc-making {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.pcalc-lines {
+  max-height: 60vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.pcalc-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  box-sizing: border-box;
+}
+
+.pcalc-line-head,
+.pcalc-line-detail {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.pcalc-line-head .asset-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pcalc-line-detail select {
+  max-width: 55%;
+}
+
+.pcalc-surplus {
+  color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  .pcalc-pick {
+    grid-template-columns: 1fr;
+  }
+
+  .pcalc-items .listbox {
+    height: 200px;
+  }
 }
 
 /* Tablets: library and inspector stack below the canvas. */

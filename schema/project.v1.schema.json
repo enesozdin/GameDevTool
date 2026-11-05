@@ -678,6 +678,31 @@
           },
           {
             "properties": {
+              "calculator": {
+                "properties": {
+                  "rate": {
+                    "maximum": 1000000000,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "recipes": {
+                    "additionalProperties": {
+                      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+                      "type": "string"
+                    },
+                    "propertyNames": {
+                      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "target": {
+                    "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
               "description": {
                 "maxLength": 10000,
                 "type": "string"

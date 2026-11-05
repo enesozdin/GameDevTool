@@ -76,11 +76,13 @@ export function Report({ strings, project, graph, catalog, network: net, result,
 
   // Bill of materials and time to first unit for the selected recipe's main output.
   const focusItem = selected?.type === "recipe" ? catalog.recipes.get(selected.recipe)?.outputs[0]?.item : selected?.type === "sink" ? selected.item : undefined;
+  // Uses the recipe choices of the rate calculator, so both show the same chain.
+  const choices = graph.calculator?.recipes;
   const plan = useMemo(() => {
     if (focusItem === undefined) return null;
-    const choice = defaultRecipeChoice(catalog);
+    const choice = defaultRecipeChoice(catalog, choices);
     return { bom: billOfMaterials(choice, focusItem, 1, BOM_ROWS), first: timeToFirstUnit(choice, focusItem) };
-  }, [catalog, focusItem]);
+  }, [catalog, focusItem, choices]);
 
   const title = (u: number) => {
     const node = graph.nodes[u]!;

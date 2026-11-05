@@ -8,7 +8,7 @@ import type { Issue, IssuePath } from "../result.ts";
 import type { Id } from "../model/primitives.ts";
 import type { Asset, Project } from "../model/project.ts";
 import { GRAPH_LIMITS, type ProductionGraphAsset } from "../model/production-graph.ts";
-import { compileCatalog } from "./catalog.ts";
+import { compileCatalog, type Catalog } from "./catalog.ts";
 import { compileNetwork, inputPortOf, NodeKind } from "./network.ts";
 import { adjacency, stronglyConnected } from "./scc.ts";
 import { ConditionCompiler, exprIssue } from "../expr/conditions.ts";
@@ -151,6 +151,8 @@ export function validateProductionGraph(
   checkUnlockOrder(graph, catalog, net, conditions, base, issues);
   if (graph.groups !== undefined || graph.nodes.some((node) => node.group !== undefined)) checkGroups(graph, base, issues);
 
+  if (graph.calculator?.recipes !== undefined) checkCalculator(graph, catalog, base, issues);
+
   // Saved scenario values: the solver ignores the ones that do not fit.
   if (graph.scenario !== undefined) {
     const variables = new Map(project.manifest.variables.map((v) => [v.id, v]));
@@ -159,6 +161,19 @@ export function validateProductionGraph(
       const path: IssuePath = [...base, "scenario", "values", id];
       if (variable === undefined) issues.push({ severity: "warning", code: "scenario-unknown-variable", path });
       else if (!fitsVariable(variable, value)) issues.push({ severity: "warning", code: "scenario-type-mismatch", path, params: { name: variable.name } });
+    }
+  }
+}
+
+/**
+ * Saved calculator recipe choices that no longer fit (the recipe stopped making the item).
+ * Missing rows are already broken references; the calculator ignores both.
+ */
+function checkCalculator(graph: ProductionGraphAsset, catalog: Catalog, base: IssuePath, issues: Issue[]): void {
+  for (const [item, recipeId] of Object.entries(graph.calculator?.recipes ?? {})) {
+    const recipe = catalog.recipes.get(recipeId);
+    if (recipe !== undefined && !recipe.outputs.some((o) => o.item === item)) {
+      issues.push({ severity: "warning", code: "calculator-recipe-mismatch", path: [...base, "calculator", "recipes", item], params: { name: recipe.name } });
     }
   }
 }

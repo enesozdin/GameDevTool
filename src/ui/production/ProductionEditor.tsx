@@ -37,6 +37,9 @@ import {
   resetScenario,
   setScenarioAllOpen,
   setScenarioValue,
+  setCalculatorTarget,
+  setCalculatorRecipe,
+  resetCalculatorRecipes,
   compileNetwork,
   sameCalculation,
   moveNodes,
@@ -66,6 +69,7 @@ import { DRAG_MIME, Library, type LibraryDrop } from "./Library.tsx";
 import { GroupFrame, GroupNode } from "./GroupNode.tsx";
 import { inHandle, outHandle, ProductionNode } from "./ProductionNode.tsx";
 import { Report } from "./Report.tsx";
+import { RateCalculator } from "./RateCalculator.tsx";
 import { Scenario } from "./Scenario.tsx";
 import type { SimulationService } from "./simulation.ts";
 
@@ -83,6 +87,10 @@ const nodeTypes = { production: ProductionNode, pgroup: GroupNode, pframe: Group
 const DEFAULT_SIZE = { width: 260, height: 140 } as const;
 /** Frames stay below nodes, even when selected (React Flow adds 1000 to selected nodes). */
 const FRAME_Z = -2000;
+/** Phones open a chain in the rate calculator; the canvas needs a larger screen. */
+const PHONE_QUERY = "(max-width: 720px)";
+type View = "canvas" | "calculator";
+const initialView = (): View => (typeof matchMedia === "function" && matchMedia(PHONE_QUERY).matches ? "calculator" : "canvas");
 const HANDLE_PREFIX = 4; // "in:" / "out:" → item id after the prefix
 const itemOfHandle = (handle: string | null | undefined): string | null => {
   if (typeof handle !== "string") return null;
@@ -102,6 +110,7 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
   const s = strings.production;
   const unit = project.manifest.settings.rateUnit;
   const [mode, setMode] = useState<SolveMode>("target");
+  const [viewMode, setViewMode] = useState<View>(initialView);
   const flow = useReactFlow();
 
   // The catalog only depends on the three tables; other edits keep the same object.
@@ -321,85 +330,109 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
     <ProductionContext.Provider value={view}>
       <div className="peditor">
         <div className="toolbar" role="toolbar" aria-label={s.mode}>
-          <div className="segmented" role="radiogroup" aria-label={s.mode}>
-            <button type="button" role="radio" aria-checked={mode === "target"} className={mode === "target" ? "is-on" : undefined} title={s.modeTargetHint} onClick={() => setMode("target")}>
-              {s.modeTarget}
+          <div className="segmented" role="radiogroup" aria-label={s.view}>
+            <button type="button" role="radio" aria-checked={viewMode === "canvas"} className={viewMode === "canvas" ? "is-on" : undefined} onClick={() => setViewMode("canvas")}>
+              {s.viewCanvas}
             </button>
-            <button type="button" role="radio" aria-checked={mode === "supply"} className={mode === "supply" ? "is-on" : undefined} title={s.modeSupplyHint} onClick={() => setMode("supply")}>
-              {s.modeSupply}
+            <button type="button" role="radio" aria-checked={viewMode === "calculator"} className={viewMode === "calculator" ? "is-on" : undefined} onClick={() => setViewMode("calculator")}>
+              {s.viewCalculator}
             </button>
           </div>
-          <button type="button" onClick={() => commit(moveNodes(project, graph.id, autoLayout(graph), "auto-layout"))}>
-            {s.autoLayout}
-          </button>
-          <button type="button" onClick={() => void flow.fitView({ duration: 200 })}>
-            {s.fitView}
-          </button>
-          <button type="button" disabled={!canGroup} title={selectedNodes.length > 0 && !canGroup ? s.groupMixedHint : s.groupHint} onClick={groupSelection}>
-            {s.group}
-          </button>
-          <button type="button" disabled={selectedGroup === undefined} title={s.ungroupHint} onClick={ungroupSelection}>
-            {s.ungroup}
-          </button>
+          {viewMode === "canvas" && (
+            <>
+              <div className="segmented" role="radiogroup" aria-label={s.mode}>
+                <button type="button" role="radio" aria-checked={mode === "target"} className={mode === "target" ? "is-on" : undefined} title={s.modeTargetHint} onClick={() => setMode("target")}>
+                  {s.modeTarget}
+                </button>
+                <button type="button" role="radio" aria-checked={mode === "supply"} className={mode === "supply" ? "is-on" : undefined} title={s.modeSupplyHint} onClick={() => setMode("supply")}>
+                  {s.modeSupply}
+                </button>
+              </div>
+              <button type="button" onClick={() => commit(moveNodes(project, graph.id, autoLayout(graph), "auto-layout"))}>
+                {s.autoLayout}
+              </button>
+              <button type="button" onClick={() => void flow.fitView({ duration: 200 })}>
+                {s.fitView}
+              </button>
+              <button type="button" disabled={!canGroup} title={selectedNodes.length > 0 && !canGroup ? s.groupMixedHint : s.groupHint} onClick={groupSelection}>
+                {s.group}
+              </button>
+              <button type="button" disabled={selectedGroup === undefined} title={s.ungroupHint} onClick={ungroupSelection}>
+                {s.ungroup}
+              </button>
+            </>
+          )}
         </div>
-        <div className="pbody">
-          <aside className="pside">
-            <Library strings={strings} catalog={catalog} onAdd={(d) => addFromLibrary(d)} />
-          </aside>
-          <div className="pcanvas" aria-label={s.canvasLabel} onDragOver={(e) => e.dataTransfer.types.includes(DRAG_MIME) && e.preventDefault()} onDrop={onDrop} onKeyDown={onCanvasKeyDown}>
-            <ReactFlow
-              nodes={rfNodes}
-              edges={rfEdges}
-              nodeTypes={nodeTypes}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onNodeDragStop={onNodeDragStop}
-              onConnect={onConnect}
-              isValidConnection={isValidConnection}
-              onDelete={({ nodes, edges }) => deleteSelection(nodes, edges.map((e) => e.id))}
-              onNodeDoubleClick={(_, n) => n.type !== "production" && toggleGroup(n.id)}
-              onlyRenderVisibleElements
-              fitView
-              minZoom={0.1}
-              deleteKeyCode={["Delete", "Backspace"]}
-              colorMode="system"
-            >
-              <Background />
-              <Controls showInteractive={false} />
-            </ReactFlow>
+        {viewMode === "calculator" ? (
+          <RateCalculator
+            strings={strings}
+            catalog={catalog}
+            calculator={graph.calculator}
+            unit={unit}
+            onTarget={(target, rate) => commit(setCalculatorTarget(project, graph.id, target, rate))}
+            onRecipe={(item, recipe) => commit(setCalculatorRecipe(project, graph.id, catalog, item, recipe))}
+            onReset={() => commit(resetCalculatorRecipes(project, graph.id))}
+          />
+        ) : (
+          <div className="pbody">
+            <aside className="pside">
+              <Library strings={strings} catalog={catalog} onAdd={(d) => addFromLibrary(d)} />
+            </aside>
+            <div className="pcanvas" aria-label={s.canvasLabel} onDragOver={(e) => e.dataTransfer.types.includes(DRAG_MIME) && e.preventDefault()} onDrop={onDrop} onKeyDown={onCanvasKeyDown}>
+              <ReactFlow
+                nodes={rfNodes}
+                edges={rfEdges}
+                nodeTypes={nodeTypes}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onNodeDragStop={onNodeDragStop}
+                onConnect={onConnect}
+                isValidConnection={isValidConnection}
+                onDelete={({ nodes, edges }) => deleteSelection(nodes, edges.map((e) => e.id))}
+                onNodeDoubleClick={(_, n) => n.type !== "production" && toggleGroup(n.id)}
+                onlyRenderVisibleElements
+                fitView
+                minZoom={0.1}
+                deleteKeyCode={["Delete", "Backspace"]}
+                colorMode="system"
+              >
+                <Background />
+                <Controls showInteractive={false} />
+              </ReactFlow>
+            </div>
+            <aside className="pside">
+              <Inspector
+                strings={strings}
+                catalog={catalog}
+                conditions={conditions}
+                unit={unit}
+                node={selectedNode}
+                group={selectedGroup}
+                groupNodeCount={selectedGroup === undefined ? 0 : descendantNodes(structure, selectedGroup.id).length}
+                edge={selectedEdge}
+                selectionSize={selectedNodes.length + selectedEdges.size}
+                onNodeChange={(id, fields) => commit(updateNode(project, graph.id, id, fields))}
+                onEdgeRatio={(id, ratio) => commit(setEdgeRatio(project, graph.id, id, ratio))}
+                onGroupChange={(id, fields) => commit(updateGroup(project, graph.id, id, fields))}
+                onUngroup={ungroupSelection}
+                onDelete={() => deleteSelection(selectedNodes, selectedEdges)}
+              />
+              <Scenario
+                strings={strings}
+                variables={variables}
+                conditions={conditions}
+                gates={gates}
+                values={values}
+                overrides={overrides ?? NO_OVERRIDES}
+                allOpen={allOpen}
+                onOverride={(id, value) => commit(setScenarioValue(project, graph.id, id, value))}
+                onReset={() => commit(resetScenario(project, graph.id))}
+                onAllOpen={(open) => commit(setScenarioAllOpen(project, graph.id, open))}
+              />
+              <Report strings={strings} project={project} graph={graph} catalog={catalog} network={network} result={result} unit={unit} selected={selectedNode} simulation={simulation} locked={locked} />
+            </aside>
           </div>
-          <aside className="pside">
-            <Inspector
-              strings={strings}
-              catalog={catalog}
-              conditions={conditions}
-              unit={unit}
-              node={selectedNode}
-              group={selectedGroup}
-              groupNodeCount={selectedGroup === undefined ? 0 : descendantNodes(structure, selectedGroup.id).length}
-              edge={selectedEdge}
-              selectionSize={selectedNodes.length + selectedEdges.size}
-              onNodeChange={(id, fields) => commit(updateNode(project, graph.id, id, fields))}
-              onEdgeRatio={(id, ratio) => commit(setEdgeRatio(project, graph.id, id, ratio))}
-              onGroupChange={(id, fields) => commit(updateGroup(project, graph.id, id, fields))}
-              onUngroup={ungroupSelection}
-              onDelete={() => deleteSelection(selectedNodes, selectedEdges)}
-            />
-            <Scenario
-              strings={strings}
-              variables={variables}
-              conditions={conditions}
-              gates={gates}
-              values={values}
-              overrides={overrides ?? NO_OVERRIDES}
-              allOpen={allOpen}
-              onOverride={(id, value) => commit(setScenarioValue(project, graph.id, id, value))}
-              onReset={() => commit(resetScenario(project, graph.id))}
-              onAllOpen={(open) => commit(setScenarioAllOpen(project, graph.id, open))}
-            />
-            <Report strings={strings} project={project} graph={graph} catalog={catalog} network={network} result={result} unit={unit} selected={selectedNode} simulation={simulation} locked={locked} />
-          </aside>
-        </div>
+        )}
       </div>
     </ProductionContext.Provider>
   );

@@ -13,7 +13,7 @@ export type ReferenceKind =
   | "document-parent"
   /** A production graph points to its items or recipes table. */
   | "graph-table"
-  /** A production graph node or connection points to an item or recipe row. */
+  /** A production graph node, connection or calculator setting points to an item or recipe row. */
   | "graph-row";
 
 export interface Reference {
@@ -154,4 +154,11 @@ function collectGraphReferences(
     else addRow(node.item, graph.items, [...base, "nodes", i, "item"]);
   });
   graph.edges.forEach((edge, i) => addRow(edge.item, graph.items, [...base, "edges", i, "item"]));
+  const calc = graph.calculator;
+  if (calc === undefined) return;
+  if (calc.target !== undefined) addRow(calc.target, graph.items, [...base, "calculator", "target"]);
+  for (const [item, recipe] of Object.entries(calc.recipes ?? {})) {
+    addRow(item, graph.items, [...base, "calculator", "recipes", item]);
+    addRow(recipe, graph.recipes, [...base, "calculator", "recipes", item]);
+  }
 }
