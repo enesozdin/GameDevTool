@@ -2,9 +2,10 @@
  * Plain-text editing of cells in the grid. Short syntaxes designers can type:
  *   list    a, b, c
  *   stacks  IronOre*2, Slag*1@0.1     (item*count@chance; count defaults to 1)
+ *           #Fuel*1                   (any item tagged Fuel; recipe inputs only)
  * Engine exports use csv-formats.ts instead; this is only the in-app editing syntax.
  */
-import type { CellValue, ColumnType, Id, ItemStack, RowNames, ScalarType } from "../../core/index.ts";
+import { isTagStack, type CellValue, type ColumnType, type Id, type RowNames, type ScalarType, type Stack } from "../../core/index.ts";
 import { parseNumberInput } from "../production/format.ts";
 
 /** undefined = invalid input; null = empty cell. */
@@ -18,8 +19,8 @@ export function cellToText(type: ColumnType, value: CellValue | undefined, names
     case "stacks":
       return Array.isArray(value)
         ? value
-            .filter((s): s is ItemStack => s !== null && typeof s === "object")
-            .map((s) => `${names.name(s.item) ?? s.item}*${s.count}${s.chance === undefined ? "" : `@${s.chance}`}`)
+            .filter((s): s is Stack => s !== null && typeof s === "object")
+            .map((s) => (isTagStack(s) ? `#${s.tag}*${s.count}` : `${names.name(s.item) ?? s.item}*${s.count}${s.chance === undefined ? "" : `@${s.chance}`}`))
             .join(", ")
         : "";
     case "list":
@@ -67,13 +68,19 @@ export function textToCell(type: ColumnType, text: string, names: RowNames, prev
       return { key, source: text };
     }
     case "stacks": {
-      const out: ItemStack[] = [];
+      const out: Stack[] = [];
       for (const part of text.split(",")) {
-        const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\*\s*([0-9.eE+-]+))?\s*(?:@\s*([0-9.eE+-]+))?\s*$/.exec(part);
+        const m = /^\s*(#?)([A-Za-z_][A-Za-z0-9_]{0,63})\s*(?:\*\s*([0-9.eE+-]+))?\s*(?:@\s*([0-9.eE+-]+))?\s*$/.exec(part);
         if (m === null) return undefined;
-        const item = names.find(type.table, m[1]!);
-        const count = m[2] === undefined ? 1 : parseNumberInput(m[2]);
-        const chance = m[3] === undefined ? undefined : parseNumberInput(m[3]);
+        const count = m[3] === undefined ? 1 : parseNumberInput(m[3]);
+        if (m[1] === "#") {
+          // Tag input: no chance; validation reports tags outside recipe inputs.
+          if (m[4] !== undefined || typeof count !== "number" || !(count > 0 && count <= 1e12)) return undefined;
+          out.push({ tag: m[2]!, count });
+          continue;
+        }
+        const item = names.find(type.table, m[2]!);
+        const chance = m[4] === undefined ? undefined : parseNumberInput(m[4]);
         if (item === undefined || typeof count !== "number" || !(count > 0 && count <= 1e12)) return undefined;
         if (chance !== undefined && (typeof chance !== "number" || !(chance > 0 && chance <= 1))) return undefined;
         out.push(chance === undefined || chance === 1 ? { item, count } : { item, count, chance });

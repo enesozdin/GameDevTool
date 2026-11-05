@@ -24,7 +24,12 @@ The Production Chain Editor stores its data in ordinary assets:
   "time": "<col>", "machine": "<col>" }`. Columns can be renamed and extra columns added
   freely; validation checks that each mapped column exists and has a suitable type.
 - **`stacks` columns** hold item amounts: `[{ "item": "<row id>", "count": 2, "chance": 0.1 }]`.
-  `chance` (0–1, default 1) marks by-products and rare outputs.
+  `chance` (0–1, default 1) marks by-products and rare outputs. A recipe input can name a
+  tag instead of an item, `{ "tag": "Fuel", "count": 1 }` ("any item tagged Fuel"; tags are
+  identifiers, matched case-insensitively against the items table's tags column). Tags are
+  only allowed in the recipes table's inputs column. Connections still carry one concrete
+  item: it goes into the node's port for that item, else into the first tag port it fits.
+  Adding tag stacks was backward compatible (schema version 1).
 - **`production-graph` assets** name their items and recipes tables and hold `nodes`
   (source, recipe, storage, sink, splitter, merger, gate; each with a position) and
   `edges` (`source`, `target`, `item`, optional `ratio`). Rates are stored in items per

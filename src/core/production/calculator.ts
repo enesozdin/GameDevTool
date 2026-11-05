@@ -3,15 +3,31 @@
  * ("1 Iron Sword per minute" → everything upstream), bill of materials and time to first
  * unit. MVP rule: one recipe per item (the first recipe row that outputs it, unless the
  * caller picks another).
+ *
+ * A tag input ("any Fuel") is made from one item with that tag: the first one (table
+ * order) that has a recipe, else the first one at all (bought as a raw resource). With no
+ * tagged item it stays the raw entry "#Fuel".
  */
 import type { Id } from "../model/primitives.ts";
-import { cycleSeconds, expectedCount, type Catalog, type CatalogRecipe } from "./catalog.ts";
+import { isTagStack, type Stack } from "../model/table.ts";
+import { cycleSeconds, expectedCount, tagKey, type Catalog, type CatalogRecipe } from "./catalog.ts";
 
-/** Recipe used to make each item. Items without an entry are raw resources. */
-export type RecipeChoice = ReadonlyMap<Id, CatalogRecipe>;
+/**
+ * Recipe used to make each item. Items without an entry are raw resources. `tagged`
+ * (lower-cased tag → items) resolves tag inputs.
+ */
+export type RecipeChoice = ReadonlyMap<Id, CatalogRecipe> & { readonly tagged?: ReadonlyMap<string, readonly Id[]> };
 
-export function defaultRecipeChoice(catalog: Catalog, overrides: ReadonlyMap<Id, Id> = new Map()): Map<Id, CatalogRecipe> {
-  const choice = new Map<Id, CatalogRecipe>();
+/** The item (or "#tag" key) an input stack is made from under this choice. */
+export function inputItem(choice: RecipeChoice, stack: Stack): Id {
+  if (!isTagStack(stack)) return stack.item;
+  const items = choice.tagged?.get(stack.tag.toLowerCase());
+  if (items === undefined || items.length === 0) return tagKey(stack.tag);
+  return items.find((id) => choice.has(id)) ?? items[0]!;
+}
+
+export function defaultRecipeChoice(catalog: Catalog, overrides: ReadonlyMap<Id, Id> = new Map()): Map<Id, CatalogRecipe> & { readonly tagged: ReadonlyMap<string, readonly Id[]> } {
+  const choice = Object.assign(new Map<Id, CatalogRecipe>(), { tagged: catalog.tagged });
   for (const recipe of catalog.recipes.values()) {
     for (const out of recipe.outputs) if (!choice.has(out.item)) choice.set(out.item, recipe);
   }
@@ -53,10 +69,10 @@ export function planRates(choice: RecipeChoice, target: Id, rate: number, maxIte
   for (let i = 0; i < items.length; i++) {
     const recipe = choice.get(items[i]!);
     if (recipe === undefined) continue;
-    for (const s of [...recipe.inputs, ...recipe.outputs]) {
-      if (!seen.has(s.item)) {
-        seen.add(s.item);
-        items.push(s.item);
+    for (const id of [...recipe.inputs.map((s) => inputItem(choice, s)), ...recipe.outputs.map((s) => s.item)]) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        items.push(id);
       }
     }
   }
@@ -76,7 +92,7 @@ export function planRates(choice: RecipeChoice, target: Id, rate: number, maxIte
     for (let i = 0; i < items.length; i++) {
       const r = recipeOf[i];
       if (r === undefined || cycles[i] === 0) continue;
-      for (const s of r.inputs) demand[index.get(s.item)!]! += cycles[i]! * s.count;
+      for (const s of r.inputs) demand[index.get(inputItem(choice, s))!]! += cycles[i]! * s.count;
       for (const s of r.outputs) if (s.item !== items[i]) supply[index.get(s.item)!]! += cycles[i]! * expectedCount(s);
     }
     let change = 0;
@@ -159,7 +175,7 @@ export function billOfMaterials(choice: RecipeChoice, item: Id, quantity = 1, ma
         truncated = true;
         break;
       }
-      children.push(build(input.item, input.count * runs));
+      children.push(build(inputItem(choice, input), input.count * runs));
     }
     path.delete(id);
     return { item: id, quantity: qty, recipe, children, cycle: false };
@@ -193,7 +209,7 @@ export function timeToFirstUnit(choice: RecipeChoice, item: Id): FirstUnit {
     visiting.add(id);
     let slowest: FirstUnit = { seconds: 0, path: [] };
     for (const input of recipe.inputs) {
-      const t = visit(input.item);
+      const t = visit(inputItem(choice, input));
       if (t.seconds > slowest.seconds || slowest.path.length === 0) slowest = t;
     }
     visiting.delete(id);

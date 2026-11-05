@@ -127,7 +127,7 @@ function collectTableReferences(
         value.forEach((item, itemIndex) => {
           const path = ["assets", assetIndex, "rows", rowIndex, "cells", column.id, itemIndex];
           if (typeof item === "string") addRow(item, path);
-          else if (column.type.kind === "stacks" && item !== null && typeof item === "object") addRow(item.item, [...path, "item"]);
+          else if (column.type.kind === "stacks" && item !== null && typeof item === "object" && "item" in item) addRow(item.item, [...path, "item"]);
         });
       }
     });

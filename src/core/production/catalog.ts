@@ -4,7 +4,7 @@
  */
 import type { Id } from "../model/primitives.ts";
 import type { Asset, Project } from "../model/project.ts";
-import type { CellValue, ItemStack, Row, TableAsset } from "../model/table.ts";
+import { isTagStack, type CellValue, type ItemStack, type Row, type Stack, type TableAsset } from "../model/table.ts";
 
 export interface CatalogItem {
   readonly id: Id;
@@ -27,7 +27,8 @@ export interface CatalogRecipe {
   /** Cycle time in seconds as written; undefined if missing or not > 0. */
   readonly time: number | undefined;
   readonly machine: CatalogMachine | undefined;
-  readonly inputs: readonly ItemStack[];
+  /** Item stacks and tag stacks ("any Fuel"). */
+  readonly inputs: readonly Stack[];
   readonly outputs: readonly ItemStack[];
   /** Unlock condition source (expression language), if any. */
   readonly gate: string | undefined;
@@ -41,6 +42,35 @@ export interface Catalog {
   readonly items: ReadonlyMap<Id, CatalogItem>;
   readonly recipes: ReadonlyMap<Id, CatalogRecipe>;
   readonly machines: ReadonlyMap<Id, CatalogMachine>;
+  /** Lower-cased tag → items carrying it, in table row order. */
+  readonly tagged: ReadonlyMap<string, readonly Id[]>;
+}
+
+/**
+ * Port key of a stack: the item id, or "#" + tag for tag stacks. Item ids are ULIDs, so
+ * the "#" prefix cannot collide with them.
+ */
+export function stackKey(stack: Stack): string {
+  return isTagStack(stack) ? tagKey(stack.tag) : stack.item;
+}
+
+export const tagKey = (tag: string): string => `#${tag}`;
+
+/** The tag of a port key, or undefined for an item key. */
+export function tagOfKey(key: string): string | undefined {
+  return key.startsWith("#") ? key.slice(1) : undefined;
+}
+
+/** Whether `item` carries `tag` (case-insensitive). */
+export function hasTag(catalog: Catalog, item: Id, tag: string): boolean {
+  const lower = tag.toLowerCase();
+  return catalog.items.get(item)?.tags.some((t) => t.toLowerCase() === lower) === true;
+}
+
+/** Whether `item` can feed the port `key`: the same item, or an item with the port's tag. */
+export function keyAccepts(catalog: Catalog, key: string, item: Id): boolean {
+  const tag = tagOfKey(key);
+  return tag === undefined ? key === item : hasTag(catalog, item, tag);
 }
 
 /** Seconds per cycle on the recipe's machine, or undefined if the recipe has no valid time. */
@@ -61,9 +91,17 @@ function findTable(assets: readonly Asset[], id: Id | undefined): TableAsset | u
 
 const num = (value: CellValue | undefined): number | undefined => (typeof value === "number" && Number.isFinite(value) ? value : undefined);
 
+/** Item stacks only (outputs, build costs): tag stacks there are invalid and skipped. */
 function stacks(value: CellValue | undefined): ItemStack[] {
   if (!Array.isArray(value)) return [];
   const out: ItemStack[] = [];
+  for (const v of value) if (v !== null && typeof v === "object" && !isTagStack(v)) out.push(v);
+  return out;
+}
+
+function inputStacks(value: CellValue | undefined): Stack[] {
+  if (!Array.isArray(value)) return [];
+  const out: Stack[] = [];
   for (const v of value) if (v !== null && typeof v === "object") out.push(v);
   return out;
 }
@@ -86,15 +124,18 @@ export function compileCatalog(project: Project, recipesId: Id | undefined, item
   const machinesTable = findTable(project.assets, machineColumn?.type.kind === "reference" ? machineColumn.type.table : undefined);
 
   const items = new Map<Id, CatalogItem>();
+  const tagged = new Map<string, Id[]>();
   if (itemsTable !== undefined) {
     const tagsColumn = itemsTable.role?.kind === "items" ? itemsTable.role.tags : undefined;
     for (const row of itemsTable.rows) {
-      const tags = cell(row, tagsColumn);
-      items.set(row.id, {
-        id: row.id,
-        name: row.name,
-        tags: Array.isArray(tags) ? tags.filter((t): t is string => typeof t === "string") : [],
-      });
+      const cellTags = cell(row, tagsColumn);
+      const tags = Array.isArray(cellTags) ? cellTags.filter((t): t is string => typeof t === "string") : [];
+      items.set(row.id, { id: row.id, name: row.name, tags });
+      for (const t of new Set(tags.map((x) => x.toLowerCase()))) {
+        const list = tagged.get(t);
+        if (list === undefined) tagged.set(t, [row.id]);
+        else list.push(row.id);
+      }
     }
   }
 
@@ -124,12 +165,12 @@ export function compileCatalog(project: Project, recipesId: Id | undefined, item
         name: row.name,
         time: time !== undefined && time > 0 ? time : undefined,
         machine: typeof machineId === "string" ? machines.get(machineId) : undefined,
-        inputs: stacks(cell(row, recipeRole.inputs)),
+        inputs: inputStacks(cell(row, recipeRole.inputs)),
         outputs: stacks(cell(row, recipeRole.outputs)),
         gate: typeof gate === "string" && gate.trim() !== "" ? gate : undefined,
       });
     }
   }
 
-  return { itemsTable, recipesTable, machinesTable, items, recipes, machines };
+  return { itemsTable, recipesTable, machinesTable, items, recipes, machines, tagged };
 }

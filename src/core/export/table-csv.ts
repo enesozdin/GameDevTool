@@ -6,7 +6,7 @@
  *   bool                   boolean
  *   enum / reference       option name / row name of the referenced row
  *   list                   array of those
- *   stacks                 array of { item, count, chance? }
+ *   stacks                 array of { item, count, chance? } or { tag, count } (tag inputs)
  *   curve                  array of { x, y }
  *   text                   localizable text (format decides: source, or key + source)
  *
@@ -20,7 +20,7 @@ import type { IdGenerator } from "../ids.ts";
 import type { Id } from "../model/primitives.ts";
 import { IdentifierSchema, LocKeySchema } from "../model/primitives.ts";
 import type { Project } from "../model/project.ts";
-import { TABLE_LIMITS, type CellValue, type Column, type ColumnType, type Curve, type ItemStack, type Row, type ScalarType, type TableAsset } from "../model/table.ts";
+import { TABLE_LIMITS, type CellValue, type Column, type ColumnType, type Curve, type Row, type Stack, TagSchema, isTagStack, type ScalarType, type TableAsset } from "../model/table.ts";
 import { err, ok, type Result } from "../result.ts";
 import { GENERIC_CSV, type CsvFormat, type CsvStructured } from "./csv-formats.ts";
 
@@ -99,8 +99,9 @@ export function toNeutral(type: ColumnType, value: Exclude<CellValue, null>, nam
     case "stacks":
       if (!Array.isArray(value)) return undefined;
       return value
-        .filter((s): s is ItemStack => s !== null && typeof s === "object")
+        .filter((s): s is Stack => s !== null && typeof s === "object")
         .map((s) => {
+          if (isTagStack(s)) return { [f("tag")]: s.tag, [f("count")]: s.count };
           const record: Record<string, CsvStructured> = { [f("item")]: names.name(s.item) ?? s.item, [f("count")]: s.count };
           if (s.chance !== undefined) record[f("chance")] = s.chance;
           return record;
@@ -286,13 +287,21 @@ function parseCell(type: ColumnType, raw: string, names: RowNames, format: CsvFo
     case "stacks": {
       const v = format.parseStructured(raw);
       if (!Array.isArray(v) || v.length > TABLE_LIMITS.stacks) return undefined;
-      const out: ItemStack[] = [];
+      const out: Stack[] = [];
       for (const item of v as CsvStructured[]) {
         if (!isRecord(item)) return undefined;
         const name = field(item, "item");
-        const itemId = typeof name === "string" ? names.find(type.table, name.trim()) : undefined;
         const countValue = field(item, "count");
         const count = countValue === undefined ? 1 : asNumber(countValue, false);
+        // A tag input: { tag, count }. An empty Item next to it (engine round trip) is ignored.
+        const tagValue = field(item, "tag");
+        const tag = typeof tagValue === "string" ? tagValue.trim() : "";
+        if (tag !== "" && (name === undefined || (typeof name === "string" && name.trim() === ""))) {
+          if (!TagSchema.safeParse(tag).success || count === undefined || !(count > 0 && count <= 1e12)) return undefined;
+          out.push({ tag, count });
+          continue;
+        }
+        const itemId = typeof name === "string" ? names.find(type.table, name.trim()) : undefined;
         const chanceValue = field(item, "chance");
         const chance = chanceValue === undefined ? undefined : asNumber(chanceValue, false);
         if (itemId === undefined || count === undefined || !(count > 0 && count <= 1e12)) return undefined;

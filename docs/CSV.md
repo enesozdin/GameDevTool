@@ -21,7 +21,7 @@ converter.
 | enum | option name |
 | reference | name of the referenced row |
 | list | array of the above |
-| stacks (item amounts) | array of `{ item, count, chance? }` (item = row name) |
+| stacks (item amounts) | array of `{ item, count, chance? }` (item = row name); a tag input ("any Fuel") is `{ tag, count }` |
 | curve | array of `{ x, y }` |
 | text (localizable) | source text; the format decides whether the key is written |
 
@@ -33,6 +33,7 @@ converter.
 | Row name header | `Name` | `---` |
 | Booleans | `true` / `false` | `True` / `False` |
 | Lists, stacks, curves | JSON: `[{"item":"IronOre","count":2}]` | Struct text: `((Item="IronOre",Count=2))` |
+| Tag inputs | `{"tag":"Fuel","count":1}` | `(Tag="Fuel",Count=1)`: give the stack USTRUCT an `FName Tag` next to `Item`; on import an empty `Item` next to a `Tag` is ignored |
 | Localizable text | source text (keys travel in the localization export) | `NSLOCTEXT("<table>", "<key>", "<source>")` |
 
 ## Import rules

@@ -322,7 +322,7 @@ ready after ~64 days.
 | Validation: mismatches, unconnected inputs, loops with no source, unreachable nodes | ✅ |
 | Editor: library with drag & drop, auto layout, rate labels, deficit/bottleneck colors | ✅ |
 | Group nodes for sub-chains (IDEF0 decomposition): nested groups, collapse/expand, boundary ports, merged connections | ✅ |
-| Tag-matched ports ("Any Fuel") | ⏳ |
+| Tag-matched ports ("Any Fuel"): tag inputs in recipe data, live connection check, calculator, CSV (`(Tag="Fuel",Count=1)`) | ✅ |
 | Expression language: tokenizer, parser, type checker, closure compiler, spec ([EXPRESSIONS.md](EXPRESSIONS.md)) | ✅ |
 | Project variables editor (bool, int, float, string, enum); renames rewrite conditions | ✅ |
 | Gate conditions (live errors in the inspector) and "used before unlocked" validation | ✅ |

@@ -26,6 +26,7 @@ import {
   groupElements,
   groupGeometry,
   groupStructure,
+  inputKeyFor,
   shownEdges,
   summarizeCollapsed,
   ungroup,
@@ -200,21 +201,27 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
     [commit, project, graph.id],
   );
 
-  const isValidConnection: IsValidConnection = useCallback(
-    (c) => {
+  // The connection carries the source port's item; the target handle must be the port that
+  // item goes into (its own port, or a tag port it fits).
+  const connectable = useCallback(
+    (c: Connection | Edge): string | null => {
       const item = itemOfHandle(c.sourceHandle);
-      return item !== null && item === itemOfHandle(c.targetHandle) && canConnect(graph, catalog, c.source, c.target, item);
+      const key = itemOfHandle(c.targetHandle);
+      const target = nodesById.get(c.target);
+      if (item === null || key === null || target === undefined || inputKeyFor(target, catalog, item) !== key) return null;
+      return canConnect(graph, catalog, c.source, c.target, item) ? item : null;
     },
-    [graph, catalog],
+    [graph, catalog, nodesById],
   );
+  const isValidConnection: IsValidConnection = useCallback((c) => connectable(c) !== null, [connectable]);
 
   const onConnect = useCallback(
     (c: Connection) => {
-      const item = itemOfHandle(c.sourceHandle);
-      if (item === null || item !== itemOfHandle(c.targetHandle) || !canConnect(graph, catalog, c.source, c.target, item)) return;
+      const item = connectable(c);
+      if (item === null) return;
       commit(addEdge(project, graph.id, { id: newId(), source: c.source, target: c.target, item }));
     },
-    [commit, project, graph, catalog, newId],
+    [commit, project, graph, connectable, newId],
   );
 
   // ---- Edges: derived from the graph and the solution. Connections at a collapsed group
@@ -228,7 +235,7 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
           source: e.source,
           target: e.target,
           sourceHandle: outHandle(e.item),
-          targetHandle: inHandle(e.item),
+          targetHandle: inHandle(e.targetKey),
           label: e.valid ? formatRate(e.flow, unit, s.perUnit) : "!",
           selectable: single,
           deletable: single,

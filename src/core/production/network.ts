@@ -7,12 +7,15 @@
  *   recipe      in[i] = count, out[o] = count × chance   a = cycles/s
  *   pass-through (storage, splitter, merger, gate): in[item] = out[item] = 1
  *   sink        in[item] = 1                  a = items/s
- * A port is (node, item). Connections that do not match a port are left out (validation
- * reports them) and carry no flow.
+ * A port is (node, key): the key is an item id, or "#tag" for a recipe input that takes
+ * any item with that tag (catalog.stackKey). A connection always carries one item; it
+ * goes into the node's port for that item, else into the first tag port the item fits.
+ * Connections that do not match a port are left out (validation reports them) and carry
+ * no flow.
  */
 import type { Id } from "../model/primitives.ts";
 import type { GraphNode, ProductionGraphAsset } from "../model/production-graph.ts";
-import { cycleSeconds, expectedCount, type Catalog } from "./catalog.ts";
+import { cycleSeconds, expectedCount, keyAccepts, stackKey, tagOfKey, type Catalog } from "./catalog.ts";
 import { adjacency, stronglyConnected } from "./scc.ts";
 
 export const NodeKind = { source: 0, recipe: 1, pass: 2, sink: 3 } as const;
@@ -24,7 +27,8 @@ export interface Network {
   readonly kind: Uint8Array;
   /** Input ports of node n: inStart[n] .. inStart[n+1]-1. */
   readonly inStart: Int32Array;
-  readonly inItem: readonly Id[];
+  /** Port key per input port: item id or "#tag". */
+  readonly inItem: readonly string[];
   readonly inCoef: Float64Array;
   readonly outStart: Int32Array;
   readonly outItem: readonly Id[];
@@ -73,7 +77,7 @@ function portsOf(node: GraphNode, catalog: Catalog): { inputs: Port[]; outputs: 
       if (recipe === undefined) return { kind: NodeKind.recipe, inputs: [], outputs: [] };
       return {
         kind: NodeKind.recipe,
-        inputs: mergePorts(recipe.inputs.map((s) => ({ item: s.item, coef: s.count, chance: 1 }))),
+        inputs: mergePorts(recipe.inputs.map((s) => ({ item: stackKey(s), coef: s.count, chance: 1 }))),
         outputs: mergePorts(recipe.outputs.map((s) => ({ item: s.item, coef: expectedCount(s), chance: s.chance ?? 1 }))),
       };
     }
@@ -107,9 +111,11 @@ export function compileNetwork(graph: ProductionGraphAsset, catalog: Catalog): N
   const machineCap = new Float64Array(n).fill(NaN);
   const rate = new Float64Array(n).fill(NaN);
   const nodeIndex = new Map<Id, number>();
-  /** Port lookup "node:item" → port index. */
+  /** Port lookup "node:key" → port index. */
   const inPortOf = new Map<string, number>();
   const outPortOf = new Map<string, number>();
+  /** Nodes with tag input ports (checked when an item has no port of its own). */
+  const hasTagPort = new Uint8Array(n);
 
   for (let i = 0; i < n; i++) {
     const node = graph.nodes[i]!;
@@ -119,6 +125,7 @@ export function compileNetwork(graph: ProductionGraphAsset, catalog: Catalog): N
     inStart[i] = inItem.length;
     outStart[i] = outItem.length;
     for (const p of inputs) {
+      if (tagOfKey(p.item) !== undefined) hasTagPort[i] = 1;
       inPortOf.set(`${i}:${p.item}`, inItem.length);
       inItem.push(p.item);
       inCoefs.push(p.coef);
@@ -157,7 +164,7 @@ export function compileNetwork(graph: ProductionGraphAsset, catalog: Catalog): N
     const t = nodeIndex.get(edge.target);
     if (s === undefined || t === undefined || s === t) continue;
     const op = outPortOf.get(`${s}:${edge.item}`);
-    const ip = inPortOf.get(`${t}:${edge.item}`);
+    const ip = inPortOf.get(`${t}:${edge.item}`) ?? (hasTagPort[t] === 1 ? tagPortFor(inItem, inStart, t, edge.item, catalog) : undefined);
     if (op === undefined || ip === undefined) continue;
     edgeSource[e] = s;
     edgeTarget[e] = t;
@@ -206,6 +213,24 @@ export function compileNetwork(graph: ProductionGraphAsset, catalog: Catalog): N
     ...orderAndComponents(n, edgeSource, edgeTarget),
     nodeIndex,
   };
+}
+
+/** First tag input port of node `t` that accepts `item`. */
+function tagPortFor(inItem: readonly string[], inStart: Int32Array, t: number, item: Id, catalog: Catalog): number | undefined {
+  for (let q = inStart[t]!; q < inStart[t + 1]!; q++) {
+    if (tagOfKey(inItem[q]!) !== undefined && keyAccepts(catalog, inItem[q]!, item)) return q;
+  }
+  return undefined;
+}
+
+/** The input port of node `node` that a connection carrying `item` goes into, or -1. */
+export function inputPortOf(net: Network, catalog: Catalog, node: number, item: Id): number {
+  let tagged = -1;
+  for (let q = net.inStart[node]!; q < net.inStart[node + 1]!; q++) {
+    if (net.inItem[q] === item) return q;
+    if (tagged < 0 && tagOfKey(net.inItem[q]!) !== undefined && keyAccepts(catalog, net.inItem[q]!, item)) tagged = q;
+  }
+  return tagged;
 }
 
 function prefix(counts: Int32Array): Int32Array {

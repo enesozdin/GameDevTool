@@ -1,4 +1,5 @@
 import { createContext, useContext } from "react";
+import { tagOfKey } from "../../core/index.ts";
 import type { Catalog, CollapsedSummary, GateState, GraphNode, GroupStructure, Id, Network, SolveResult } from "../../core/index.ts";
 import type { UiStrings } from "../strings.ts";
 import type { RateUnit } from "./format.ts";
@@ -32,7 +33,10 @@ export function useProductionView(): ProductionView {
   return view;
 }
 
-export function itemName(view: Pick<ProductionView, "catalog" | "strings">, id: Id): string {
+/** Display name of an item id, or "Any <tag>" for a tag port key ("#tag"). */
+export function itemName(view: Pick<ProductionView, "catalog" | "strings">, id: string): string {
+  const tag = tagOfKey(id);
+  if (tag !== undefined) return view.strings.production.anyTag(tag);
   return view.catalog.items.get(id)?.name ?? view.strings.production.unknownItem;
 }
 

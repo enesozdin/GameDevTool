@@ -64,7 +64,8 @@ const TextType = z.object({ kind: z.literal("text") });
 const CurveType = z.object({ kind: z.literal("curve") });
 
 /**
- * Item amounts, e.g. recipe inputs/outputs or a build cost. Cells store ItemStack[];
+ * Item amounts, e.g. recipe inputs/outputs or a build cost. Cells store Stack[] (item
+ * stacks; recipe inputs may also hold tag stacks);
  * `table` is the items table the stacks point into. Exported in Unreal struct-array text
  * format: ((Item="IronOre",Count=2),(Item="Coal",Count=1)).
  */
@@ -125,6 +126,30 @@ export const ItemStackSchema = z.object({
 });
 export type ItemStack = z.infer<typeof ItemStackSchema>;
 
+/**
+ * Item tag as used by tag stacks: an identifier, matched case-insensitively against the
+ * items table's tags column (e.g. "Fuel").
+ */
+export const TagSchema = z.string().check(z.regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/));
+
+/**
+ * "Any item with this tag" in a recipe input, e.g. `{ "tag": "Fuel", "count": 1 }`. Only
+ * allowed in the inputs column of a recipes table (validate.ts); connections still carry
+ * one concrete item.
+ */
+export const TagStackSchema = z.object({
+  tag: TagSchema,
+  count: z.number().check(z.gt(0), z.lte(1e12)),
+});
+export type TagStack = z.infer<typeof TagStackSchema>;
+
+/** One entry of a stacks cell. */
+export type Stack = ItemStack | TagStack;
+
+export function isTagStack(stack: Stack): stack is TagStack {
+  return "tag" in stack;
+}
+
 const ScalarCellSchema = z.union([z.null(), z.boolean(), z.number(), z.string().check(z.maxLength(TABLE_LIMITS.stringCell))]);
 
 export const CellValueSchema = z.union([
@@ -132,7 +157,7 @@ export const CellValueSchema = z.union([
   LocalizableTextSchema,
   CurveSchema,
   z.array(ScalarCellSchema).check(z.maxLength(TABLE_LIMITS.listItems)),
-  z.array(ItemStackSchema).check(z.maxLength(TABLE_LIMITS.stacks)),
+  z.array(z.union([ItemStackSchema, TagStackSchema])).check(z.maxLength(TABLE_LIMITS.stacks)),
 ]);
 export type CellValue = z.infer<typeof CellValueSchema>;
 

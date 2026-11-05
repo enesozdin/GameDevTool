@@ -9,7 +9,7 @@ import type { Id } from "../model/primitives.ts";
 import type { Asset, Project } from "../model/project.ts";
 import { GRAPH_LIMITS, type ProductionGraphAsset } from "../model/production-graph.ts";
 import { compileCatalog } from "./catalog.ts";
-import { compileNetwork, NodeKind } from "./network.ts";
+import { compileNetwork, inputPortOf, NodeKind } from "./network.ts";
 import { adjacency, stronglyConnected } from "./scc.ts";
 import { ConditionCompiler, exprIssue } from "../expr/conditions.ts";
 import { checkUnlockOrder } from "./unlocks.ts";
@@ -69,7 +69,7 @@ export function validateProductionGraph(
     if (!hasPort(net.outItem, net.outStart, s, edge.item)) {
       issues.push({ severity: "error", code: "port-mismatch", path: [...path, "item"], params: { side: "output" } });
     }
-    if (!hasPort(net.inItem, net.inStart, t, edge.item)) {
+    if (inputPortOf(net, catalog, t, edge.item) < 0) {
       issues.push({ severity: "error", code: "port-mismatch", path: [...path, "item"], params: { side: "input" } });
     }
   });

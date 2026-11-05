@@ -2,7 +2,7 @@ import type { Issue, IssuePath } from "../result.ts";
 import type { EnumOption, Id } from "./primitives.ts";
 import type { Project } from "./project.ts";
 import { buildReferenceIndex, type ReferenceIndex } from "./references.ts";
-import type { CellValue, Column, ColumnType, ScalarType, TableAsset } from "./table.ts";
+import { isTagStack, type CellValue, type Column, type ColumnType, type ScalarType, type TableAsset } from "./table.ts";
 import { ULID_PATTERN } from "../ids.ts";
 import type { Asset } from "./project.ts";
 import { validateProductionGraph } from "../production/validate-graph.ts";
@@ -114,8 +114,10 @@ function validateTable(table: TableAsset, assetIndex: number, claimId: ClaimId, 
   }
 
   const rowNames = new NameSet();
+  // Tag stacks ("any Fuel") are only meaningful as recipe inputs.
+  const tagColumn = table.role?.kind === "recipes" ? table.role.inputs : undefined;
   // One reusable location object instead of a closure per cell.
-  const at: CellLocation = { base, row: 0, column: "" };
+  const at: CellLocation = { base, row: 0, column: "", tagsAllowed: false };
   table.rows.forEach((row, r) => {
     at.row = r;
     claimId(row.id, () => [...base, "rows", r, "id"]);
@@ -126,6 +128,7 @@ function validateTable(table: TableAsset, assetIndex: number, claimId: ClaimId, 
     for (const column of table.columns) {
       const value = row.cells[column.id];
       at.column = column.id;
+      at.tagsAllowed = column.id === tagColumn;
       if (value === undefined || value === null) {
         if (column.required === true) issues.push({ severity: "error", code: "required-missing", path: cellPath(at) });
         continue;
@@ -186,6 +189,7 @@ function validateRole(table: TableAsset, assetIndex: number, assets: ReadonlyMap
       const inputs = check("inputs", role.inputs, isStacks);
       const outputs = check("outputs", role.outputs, isStacks);
       checkTableRole("inputs", inputs, "items");
+      if (inputs?.type.kind === "stacks") checkTags(table, inputs.id, assets.get(inputs.type.table), assetIndex, issues);
       checkTableRole("outputs", outputs, "items");
       if (inputs !== undefined && outputs !== undefined && inputs.type.kind === "stacks" && outputs.type.kind === "stacks" && inputs.type.table !== outputs.type.table) {
         issues.push({ severity: "error", code: "role-items-mismatch", path: ["assets", assetIndex, "role", "outputs"] });
@@ -211,6 +215,34 @@ function validateRole(table: TableAsset, assetIndex: number, assets: ReadonlyMap
   }
 }
 
+/** Warns about tag stacks that no item of the items table carries. */
+function checkTags(table: TableAsset, column: Id, items: Asset | undefined, assetIndex: number, issues: Issue[]): void {
+  let known: Set<string> | undefined;
+  table.rows.forEach((row, r) => {
+    const value = row.cells[column];
+    if (!Array.isArray(value)) return;
+    value.forEach((stack, i) => {
+      if (stack === null || typeof stack !== "object" || !("tag" in stack)) return;
+      known ??= itemTags(items);
+      if (!known.has(stack.tag.toLowerCase())) {
+        issues.push({ severity: "warning", code: "tag-no-items", path: ["assets", assetIndex, "rows", r, "cells", column, i, "tag"], params: { tag: stack.tag } });
+      }
+    });
+  });
+}
+
+/** Lower-cased tags of an items table (role "items"). */
+function itemTags(items: Asset | undefined): Set<string> {
+  const out = new Set<string>();
+  if (items?.kind !== "table" || items.role?.kind !== "items" || items.role.tags === undefined) return out;
+  const column = items.role.tags;
+  for (const row of items.rows) {
+    const tags = row.cells[column];
+    if (Array.isArray(tags)) for (const t of tags) if (typeof t === "string") out.add(t.toLowerCase());
+  }
+  return out;
+}
+
 function checkColumnType(type: ColumnType, path: IssuePath, claimId: ClaimId, issues: Issue[]): void {
   if (type.kind === "list") {
     checkColumnType(type.item, [...path, "item"], claimId, issues);
@@ -226,6 +258,7 @@ interface CellLocation {
   readonly base: IssuePath;
   row: number;
   column: Id;
+  tagsAllowed: boolean;
 }
 
 function cellPath(at: CellLocation, ...rest: (string | number)[]): IssuePath {
@@ -264,16 +297,22 @@ function checkCell(type: ColumnType, value: Exclude<CellValue, null>, at: CellLo
         issues.push(mismatch(cellPath(at), type.kind));
         return;
       }
-      const seen = new Set<Id>();
+      const seen = new Set<string>();
       for (let i = 0; i < value.length; i++) {
         const stack = value[i];
         if (stack === null || typeof stack !== "object") {
           issues.push(mismatch(cellPath(at, i), type.kind));
-        } else if (seen.has(stack.item)) {
-          issues.push({ severity: "warning", code: "duplicate-stack-item", path: cellPath(at, i, "item") });
-        } else {
-          seen.add(stack.item);
+          continue;
         }
+        const tag = isTagStack(stack);
+        if (tag && !at.tagsAllowed) {
+          issues.push({ severity: "error", code: "stack-tag-not-allowed", path: cellPath(at, i, "tag") });
+          continue;
+        }
+        // Tags are case-insensitive; "#" cannot start an item id (ULID).
+        const key = tag ? `#${stack.tag.toLowerCase()}` : stack.item;
+        if (seen.has(key)) issues.push({ severity: "warning", code: "duplicate-stack-item", path: cellPath(at, i, tag ? "tag" : "item") });
+        else seen.add(key);
       }
       return;
     }

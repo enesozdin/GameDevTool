@@ -592,27 +592,49 @@
                           },
                           {
                             "items": {
-                              "properties": {
-                                "chance": {
-                                  "exclusiveMinimum": 0,
-                                  "maximum": 1,
-                                  "type": "number"
+                              "anyOf": [
+                                {
+                                  "properties": {
+                                    "chance": {
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 1,
+                                      "type": "number"
+                                    },
+                                    "count": {
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 1000000000000,
+                                      "type": "number"
+                                    },
+                                    "item": {
+                                      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "item",
+                                    "count"
+                                  ],
+                                  "type": "object"
                                 },
-                                "count": {
-                                  "exclusiveMinimum": 0,
-                                  "maximum": 1000000000000,
-                                  "type": "number"
-                                },
-                                "item": {
-                                  "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
-                                  "type": "string"
+                                {
+                                  "properties": {
+                                    "count": {
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 1000000000000,
+                                      "type": "number"
+                                    },
+                                    "tag": {
+                                      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "tag",
+                                    "count"
+                                  ],
+                                  "type": "object"
                                 }
-                              },
-                              "required": [
-                                "item",
-                                "count"
-                              ],
-                              "type": "object"
+                              ]
                             },
                             "maxItems": 256,
                             "type": "array"

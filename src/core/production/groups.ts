@@ -159,6 +159,8 @@ export interface ShownEdge {
   readonly source: Id;
   readonly target: Id;
   readonly item: Id;
+  /** Input port key at the target: the item, or "#tag" for a tag port (network.inItem). */
+  readonly targetKey: string;
   /** Graph edge index when this is exactly one ungrouped edge; -1 when merged. */
   readonly edge: number;
   readonly flow: number;
@@ -176,18 +178,19 @@ export function shownEdges(graph: ProductionGraphAsset, structure: GroupStructur
     const valid = inPort >= 0;
     const short = valid && result.inRequired[inPort]! - result.inSupplied[inPort]! > RATE_EPSILON;
     const flow = result.edgeFlow[i]!;
+    const targetKey = valid ? net.inItem[inPort]! : e.item;
     const source = structure.shownAs.get(e.source) ?? e.source;
     const target = structure.shownAs.get(e.target) ?? e.target;
     if (source === e.source && target === e.target) {
-      out.push({ id: e.id, source, target, item: e.item, edge: i, flow, valid, short });
+      out.push({ id: e.id, source, target, item: e.item, targetKey, edge: i, flow, valid, short });
       return;
     }
     if (source === target) return; // inside one collapsed group
-    const key = `${source}>${target}:${e.item}`;
+    const key = `${source}>${target}:${e.item}>${targetKey}`;
     const at = merged.get(key);
     if (at === undefined) {
       merged.set(key, out.length);
-      out.push({ id: key, source, target, item: e.item, edge: -1, flow, valid, short });
+      out.push({ id: key, source, target, item: e.item, targetKey, edge: -1, flow, valid, short });
     } else {
       const prev = out[at]!;
       out[at] = { ...prev, flow: prev.flow + flow, valid: prev.valid && valid, short: prev.short || short };
@@ -197,7 +200,8 @@ export function shownEdges(graph: ProductionGraphAsset, structure: GroupStructur
 }
 
 export interface BoundaryPort {
-  readonly item: Id;
+  /** Item id, or "#tag" for a member tag input fed from outside (network.inItem). */
+  readonly item: string;
   /** Items/s crossing the boundary (outputs: plus the surplus of unconnected member outputs). */
   readonly rate: number;
   /** A member input of this item gets less than it needs. */
@@ -220,8 +224,8 @@ export interface CollapsedSummary {
  */
 export function summarizeCollapsed(graph: ProductionGraphAsset, structure: GroupStructure, net: Network, result: SolveResult, locked?: Uint8Array): Map<Id, CollapsedSummary> {
   interface Draft {
-    inputs: Map<Id, { rate: number; warn: boolean }>;
-    outputs: Map<Id, { rate: number; warn: boolean }>;
+    inputs: Map<string, { rate: number; warn: boolean }>;
+    outputs: Map<string, { rate: number; warn: boolean }>;
     nodeCount: number;
     deficit: number;
     bottleneck: boolean;
@@ -235,7 +239,7 @@ export function summarizeCollapsed(graph: ProductionGraphAsset, structure: Group
   }
   if (drafts.size === 0) return new Map();
 
-  const add = (ports: Draft["inputs"], item: Id, rate: number, warn: boolean) => {
+  const add = (ports: Draft["inputs"], item: string, rate: number, warn: boolean) => {
     const p = ports.get(item);
     if (p === undefined) ports.set(item, { rate, warn });
     else {
@@ -269,7 +273,7 @@ export function summarizeCollapsed(graph: ProductionGraphAsset, structure: Group
     if (source === target) return;
     const flow = result.edgeFlow[i]!;
     const into = drafts.get(target);
-    if (into !== undefined) add(into.inputs, e.item, flow, shortAt(inPort));
+    if (into !== undefined) add(into.inputs, net.inItem[inPort]!, flow, shortAt(inPort));
     const from = drafts.get(source);
     if (from !== undefined) add(from.outputs, e.item, flow, false);
   });

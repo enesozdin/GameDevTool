@@ -14,6 +14,7 @@ import {
   type Project,
   type SolveResult,
 } from "../../core/index.ts";
+import { itemName } from "./context.ts";
 import type { UiStrings } from "../strings.ts";
 import { formatNumber, formatRate, type RateUnit } from "./format.ts";
 import type { SimulationHandle, SimulationResult, SimulationService } from "./simulation.ts";
@@ -37,7 +38,7 @@ const BOM_ROWS = 200;
 
 export function Report({ strings, project, graph, catalog, network: net, result, unit, selected, simulation, locked }: ReportProps) {
   const s = strings.production;
-  const name = (id: Id) => catalog.items.get(id)?.name ?? s.unknownItem;
+  const name = (id: Id) => itemName({ catalog, strings }, id);
   const rate = (v: number) => formatRate(v, unit, s.perUnit);
 
   const summary = useMemo(() => {

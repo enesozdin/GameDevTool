@@ -74,7 +74,7 @@ describe("table csv", () => {
     assert.equal(lines[0], "Name,Inputs,Outputs,Time,Machine,Gate");
     assert.equal(
       lines[2],
-      'SmeltIronBar,"[{""item"":""IronOre"",""count"":2},{""item"":""Coal"",""count"":1}]","[{""item"":""IronBar"",""count"":1},{""item"":""Slag"",""count"":1,""chance"":0.1}]",4,Furnace,',
+      'SmeltIronBar,"[{""item"":""IronOre"",""count"":2},{""tag"":""Fuel"",""count"":1}]","[{""item"":""IronBar"",""count"":1},{""item"":""Slag"",""count"":1,""chance"":0.1}]",4,Furnace,',
     );
   });
 
@@ -82,7 +82,7 @@ describe("table csv", () => {
     const { project, recipes } = sampleProject();
     const lines = exportTableCsv(project, recipes, { format: UNREAL_CSV }).split("\n");
     assert.equal(lines[0], "---,Inputs,Outputs,Time,Machine,Gate");
-    assert.equal(lines[2], 'SmeltIronBar,"((Item=""IronOre"",Count=2),(Item=""Coal"",Count=1))","((Item=""IronBar"",Count=1),(Item=""Slag"",Count=1,Chance=0.1))",4,Furnace,');
+    assert.equal(lines[2], 'SmeltIronBar,"((Item=""IronOre"",Count=2),(Tag=""Fuel"",Count=1))","((Item=""IronBar"",Count=1),(Item=""Slag"",Count=1,Chance=0.1))",4,Furnace,');
   });
 
   for (const format of [GENERIC_CSV, UNREAL_CSV]) {

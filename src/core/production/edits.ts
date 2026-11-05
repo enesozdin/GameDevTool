@@ -7,7 +7,7 @@ import type { Id } from "../model/primitives.ts";
 import type { Asset, Project } from "../model/project.ts";
 import { MAX_ASSETS } from "../model/project.ts";
 import { GRAPH_LIMITS, type GraphEdge, type GraphGroup, type GraphNode, type Position, type ProductionGraphAsset, type Scenario } from "../model/production-graph.ts";
-import type { Catalog } from "./catalog.ts";
+import { keyAccepts, stackKey, type Catalog } from "./catalog.ts";
 import { containerOf, descendantGroups, descendantNodes, groupStructure } from "./groups.ts";
 
 function graphAt(project: Project, graphId: Id): { graph: ProductionGraphAsset; index: number } | null {
@@ -25,12 +25,24 @@ export function addAssets(project: Project, assets: readonly Asset[], label: str
   };
 }
 
-/** Items a node takes as input / gives as output. */
-export function nodeInputs(node: GraphNode, catalog: Catalog): Id[] {
+/** Input port keys of a node: item ids, and "#tag" for tag inputs (catalog.stackKey). */
+export function nodeInputs(node: GraphNode, catalog: Catalog): string[] {
   if (node.type === "source") return [];
-  if (node.type === "recipe") return unique((catalog.recipes.get(node.recipe)?.inputs ?? []).map((s) => s.item));
+  if (node.type === "recipe") return unique((catalog.recipes.get(node.recipe)?.inputs ?? []).map(stackKey));
   return [node.item];
 }
+
+/**
+ * The input port `item` goes into on `node`: its own port if the node takes the item,
+ * else the first tag port whose tag the item carries. Undefined if none accepts it.
+ */
+export function inputKeyFor(node: GraphNode, catalog: Catalog, item: Id): string | undefined {
+  const keys = nodeInputs(node, catalog);
+  if (keys.includes(item)) return item;
+  return keys.find((k) => keyAccepts(catalog, k, item));
+}
+
+/** Items a node gives as output. */
 
 export function nodeOutputs(node: GraphNode, catalog: Catalog): Id[] {
   if (node.type === "sink") return [];
@@ -38,17 +50,20 @@ export function nodeOutputs(node: GraphNode, catalog: Catalog): Id[] {
   return [node.item];
 }
 
-function unique(ids: Id[]): Id[] {
+function unique(ids: string[]): string[] {
   return ids.length < 2 ? ids : [...new Set(ids)];
 }
 
-/** The live check of the editor: the item must be an output of `source` and an input of `target`. */
+/**
+ * The live check of the editor: the item must be an output of `source` and accepted by an
+ * input of `target` (the same item, or a tag the item carries).
+ */
 export function canConnect(graph: ProductionGraphAsset, catalog: Catalog, source: Id, target: Id, item: Id): boolean {
   if (source === target) return false;
   const s = graph.nodes.find((n) => n.id === source);
   const t = graph.nodes.find((n) => n.id === target);
   if (s === undefined || t === undefined) return false;
-  if (!nodeOutputs(s, catalog).includes(item) || !nodeInputs(t, catalog).includes(item)) return false;
+  if (!nodeOutputs(s, catalog).includes(item) || inputKeyFor(t, catalog, item) === undefined) return false;
   return !graph.edges.some((e) => e.source === source && e.target === target && e.item === item);
 }
 

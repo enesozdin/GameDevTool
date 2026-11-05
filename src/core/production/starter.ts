@@ -7,7 +7,7 @@ import type { IdGenerator } from "../ids.ts";
 import type { Id } from "../model/primitives.ts";
 import type { GraphEdge, GraphNode, ProductionGraphAsset } from "../model/production-graph.ts";
 import type { Project } from "../model/project.ts";
-import type { Column, ItemStack, Row, TableAsset } from "../model/table.ts";
+import type { Column, ItemStack, Row, Stack, TableAsset } from "../model/table.ts";
 import { autoLayout } from "./layout.ts";
 
 export interface ProductionTables {
@@ -93,8 +93,8 @@ export function createProductionGraph(newId: IdGenerator, name: string, tables: 
 }
 
 /**
- * A small working example: ore and coal are smelted into bars (10% chance of slag), bars
- * are forged into swords. Target: one sword per minute.
+ * A small working example: ore and fuel (coal, tagged "Fuel") are smelted into bars (10%
+ * chance of slag), bars are forged into swords. Target: one sword per minute.
  */
 export function createProductionSample(newId: IdGenerator, names: ProductionNames): { tables: ProductionTables; graph: ProductionGraphAsset } {
   const tables = createProductionTables(newId, names);
@@ -115,7 +115,7 @@ export function createProductionSample(newId: IdGenerator, names: ProductionName
   machines.rows.push(drill, furnace, anvil);
 
   const [inputsCol, outputsCol, timeCol, machineCol] = recipes.columns as [Column, Column, Column, Column];
-  const recipeRow = (name: string, inputs: ItemStack[], outputs: ItemStack[], time: number, machine: Id): Row => ({
+  const recipeRow = (name: string, inputs: Stack[], outputs: ItemStack[], time: number, machine: Id): Row => ({
     id: newId(),
     name,
     cells: { [inputsCol.id]: inputs, [outputsCol.id]: outputs, [timeCol.id]: time, [machineCol.id]: machine },
@@ -125,7 +125,8 @@ export function createProductionSample(newId: IdGenerator, names: ProductionName
     "SmeltIronBar",
     [
       { item: ore.id, count: 2 },
-      { item: coal.id, count: 1 },
+      // Any fuel: coal here, but any item tagged "Fuel" can feed the furnace.
+      { tag: "Fuel", count: 1 },
     ],
     [
       { item: bar.id, count: 1 },
