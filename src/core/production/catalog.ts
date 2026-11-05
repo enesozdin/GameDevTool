@@ -3,7 +3,7 @@
  * solver, validation and editor. Bad cells are skipped here; validate.ts reports them.
  */
 import type { Id } from "../model/primitives.ts";
-import type { Asset, Project } from "../model/project.ts";
+import type { Asset } from "../model/project.ts";
 import { isTagStack, type CellValue, type ItemStack, type Row, type Stack, type TableAsset } from "../model/table.ts";
 
 export interface CatalogItem {
@@ -112,9 +112,10 @@ function cell(row: Row, column: Id | undefined): CellValue | undefined {
 
 /**
  * Compiles the catalog for a recipes table (and the items table it points to). `itemsId`
- * overrides the items table, e.g. the one a production graph names.
+ * overrides the items table, e.g. the one a production graph names. Only the assets are
+ * read, so a caller that has just the tables (the Monte Carlo worker) needs no full project.
  */
-export function compileCatalog(project: Project, recipesId: Id | undefined, itemsId?: Id): Catalog {
+export function compileCatalog(project: { readonly assets: readonly Asset[] }, recipesId: Id | undefined, itemsId?: Id): Catalog {
   const recipesTable = findTable(project.assets, recipesId);
   const recipeRole = recipesTable?.role?.kind === "recipes" ? recipesTable.role : undefined;
 
