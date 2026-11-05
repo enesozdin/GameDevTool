@@ -24,6 +24,9 @@ import {
   ConditionCompiler,
   evaluateGates,
   scenarioValues,
+  resetScenario,
+  setScenarioAllOpen,
+  setScenarioValue,
   compileNetwork,
   moveNodes,
   RATE_EPSILON,
@@ -41,6 +44,8 @@ import {
   type SolveMode,
   type Value,
 } from "../../core/index.ts";
+
+const NO_OVERRIDES: Readonly<Record<Id, Value>> = {};
 import type { UiStrings } from "../strings.ts";
 import { ProductionContext, type ProductionView } from "./context.ts";
 import { formatRate } from "./format.ts";
@@ -95,9 +100,9 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
   // Variables change rarely; one compile cache per variable list.
   const variables = project.manifest.variables;
   const conditions = useMemo(() => new ConditionCompiler(variables), [variables]);
-  // Scenario: what-if variable values for gates (start values + overrides), not saved.
-  const [overrides, setOverrides] = useState<ReadonlyMap<Id, Value>>(new Map());
-  const [allOpen, setAllOpen] = useState(false);
+  // Scenario: what-if variable values for gates (start values + saved overrides).
+  const overrides = graph.scenario?.values;
+  const allOpen = graph.scenario?.allOpen === true;
   const values = useMemo(() => scenarioValues(conditions, variables, overrides), [conditions, variables, overrides]);
   const gates = useMemo(() => evaluateGates(graph, catalog, conditions, values), [graph, catalog, conditions, values]);
   const locked = allOpen || gates.lockedCount === 0 ? undefined : gates.locked;
@@ -288,18 +293,11 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
               conditions={conditions}
               gates={gates}
               values={values}
-              overrides={overrides}
+              overrides={overrides ?? NO_OVERRIDES}
               allOpen={allOpen}
-              onOverride={(id, value) =>
-                setOverrides((prev) => {
-                  const next = new Map(prev);
-                  if (value === undefined) next.delete(id);
-                  else next.set(id, value);
-                  return next;
-                })
-              }
-              onReset={() => setOverrides(new Map())}
-              onAllOpen={setAllOpen}
+              onOverride={(id, value) => commit(setScenarioValue(project, graph.id, id, value))}
+              onReset={() => commit(resetScenario(project, graph.id))}
+              onAllOpen={(open) => commit(setScenarioAllOpen(project, graph.id, open))}
             />
             <Report strings={strings} project={project} graph={graph} catalog={catalog} network={network} result={result} unit={unit} selected={selectedNode} simulation={simulation} locked={locked} />
           </aside>

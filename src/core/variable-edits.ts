@@ -1,7 +1,8 @@
 /**
  * Edits on project variables (flags, counters, quest states). Renaming a variable also
  * rewrites every expression that uses it (gate nodes, recipe unlock cells), so a rename
- * never breaks a condition.
+ * never breaks a condition. Deleting a variable or changing its type drops saved scenario
+ * values that no longer fit it.
  */
 import type { Change, Patch } from "./history.ts";
 import type { IdGenerator } from "./ids.ts";
@@ -9,6 +10,7 @@ import { IdentifierSchema, type EnumOption, type Id } from "./model/primitives.t
 import type { Project, Variable } from "./model/project.ts";
 import { tokenize } from "./expr/parser.ts";
 import { ExprException, KEYWORDS } from "./expr/syntax.ts";
+import { fitsVariable } from "./production/gates.ts";
 
 export const MAX_VARIABLES = 10_000;
 
@@ -55,7 +57,7 @@ export function addVariable(project: Project, variable: Variable): Change | null
 export function removeVariable(project: Project, id: Id): Change | null {
   const index = project.manifest.variables.findIndex((v) => v.id === id);
   if (index < 0) return null;
-  return { label: "remove-variable", patches: [{ op: "remove", path: ["manifest", "variables"], index }] };
+  return { label: "remove-variable", patches: [{ op: "remove", path: ["manifest", "variables"], index }, ...dropScenarioValues(project, id, undefined)] };
 }
 
 /**
@@ -71,6 +73,7 @@ export function updateVariable(project: Project, next: Variable): Change | null 
   if (JSON.stringify(prev) === JSON.stringify(next)) return null;
   const patches: Patch[] = [{ op: "set", path: ["manifest", "variables", index], value: next }];
   if (prev.name.toLowerCase() !== next.name.toLowerCase()) patches.push(...renameInExpressions(project, prev.name, next.name));
+  patches.push(...dropScenarioValues(project, next.id, next));
   return { label: prev.name === next.name ? "edit-variable" : "rename-variable", coalesceKey: `variable:${next.id}`, patches };
 }
 
@@ -98,6 +101,24 @@ export function renameInExpression(source: string, from: string, to: string): st
     last = t.end;
   }
   return last === 0 ? source : out + source.slice(last);
+}
+
+/**
+ * Patches that remove a variable's scenario value from every production graph where it
+ * no longer fits (`next` undefined = the variable is deleted).
+ */
+function dropScenarioValues(project: Project, id: Id, next: Variable | undefined): Patch[] {
+  const patches: Patch[] = [];
+  project.assets.forEach((asset, a) => {
+    const scenario = asset.kind === "production-graph" ? asset.scenario : undefined;
+    if (scenario === undefined || !Object.hasOwn(scenario.values, id)) return;
+    if (next !== undefined && fitsVariable(next, scenario.values[id]!)) return;
+    const values = { ...scenario.values };
+    delete values[id];
+    const empty = Object.keys(values).length === 0 && scenario.allOpen !== true;
+    patches.push({ op: "set", path: ["assets", a, "scenario"], value: empty ? undefined : { ...scenario, values } });
+  });
+  return patches;
 }
 
 /** Patches that rename a variable in gate nodes and recipe unlock cells. */

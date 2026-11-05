@@ -161,6 +161,8 @@ export const en = {
       unreachable: "No source reaches this node",
       "gate-condition-empty": "Gate has no condition",
       "used-before-unlocked": "Recipe can be unlocked before one of its inputs",
+      "scenario-unknown-variable": "Scenario value for a variable that does not exist",
+      "scenario-type-mismatch": "Scenario value does not fit its variable",
       "reserved-name": "Name is a reserved word (and, or, not, true, false)",
       "expr-empty": "Expression is empty",
       "expr-too-long": "Expression is too long",
@@ -262,6 +264,8 @@ export const en = {
     "remove-variable": "delete variable",
     "edit-variable": "edit variable",
     "rename-variable": "rename variable",
+    "edit-scenario": "edit scenario",
+    "reset-scenario": "reset scenario",
   } as Record<string, string>,
 
   /** Open/load error codes. */
@@ -336,7 +340,7 @@ export const en = {
     fieldCapacity: "Capacity (empty = unlimited)",
     fieldCondition: "Unlock condition",
     scenario: "Scenario",
-    scenarioHint: "Variable values to calculate with. Not saved; start values stay unchanged.",
+    scenarioHint: "Variable values to calculate with, saved with this chain. Start values stay unchanged.",
     scenarioChanged: (name: string) => `${name} (changed)`,
     scenarioReset: "Reset to start values",
     allGatesOpen: "Treat all gates as open",

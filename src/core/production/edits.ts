@@ -6,7 +6,7 @@ import type { Change, Patch } from "../history.ts";
 import type { Id } from "../model/primitives.ts";
 import type { Asset, Project } from "../model/project.ts";
 import { MAX_ASSETS } from "../model/project.ts";
-import { GRAPH_LIMITS, type GraphEdge, type GraphNode, type Position, type ProductionGraphAsset } from "../model/production-graph.ts";
+import { GRAPH_LIMITS, type GraphEdge, type GraphNode, type Position, type ProductionGraphAsset, type Scenario } from "../model/production-graph.ts";
 import type { Catalog } from "./catalog.ts";
 
 function graphAt(project: Project, graphId: Id): { graph: ProductionGraphAsset; index: number } | null {
@@ -115,4 +115,43 @@ export function removeGraphElements(project: Project, graphId: Id, nodeIds: Read
     if (nodeIds.has(at.graph.nodes[i]!.id)) patches.push({ op: "remove", path: ["assets", at.index, "nodes"], index: i });
   }
   return patches.length === 0 ? null : { label: "remove-graph-elements", patches };
+}
+
+// ---------------------------------------------------------------------------------------
+// Scenario (saved what-if variable values, see gates.ts)
+// ---------------------------------------------------------------------------------------
+
+/** An empty scenario is stored as no field at all, so untouched chains stay unchanged. */
+function setScenario(index: number, next: Scenario, label: string, coalesceKey?: string): Change {
+  const empty = Object.keys(next.values).length === 0 && next.allOpen !== true;
+  const value: Scenario | undefined = empty ? undefined : next.allOpen === true ? next : { values: next.values };
+  const change: Change = { label, patches: [{ op: "set", path: ["assets", index, "scenario"], value }] };
+  return coalesceKey === undefined ? change : { ...change, coalesceKey };
+}
+
+/** Sets (or with `undefined`, clears) the scenario value of one variable. */
+export function setScenarioValue(project: Project, graphId: Id, variableId: Id, value: boolean | number | string | undefined): Change | null {
+  const at = graphAt(project, graphId);
+  if (at === null) return null;
+  const prev = at.graph.scenario ?? { values: {} };
+  const had = Object.hasOwn(prev.values, variableId);
+  if (value === undefined ? !had : had && prev.values[variableId] === value) return null;
+  if (typeof value === "number" && !Number.isFinite(value)) return null;
+  const values = { ...prev.values };
+  if (value === undefined) delete values[variableId];
+  else values[variableId] = value;
+  return setScenario(at.index, { ...prev, values }, "edit-scenario", `scenario:${graphId}:${variableId}`);
+}
+
+export function setScenarioAllOpen(project: Project, graphId: Id, allOpen: boolean): Change | null {
+  const at = graphAt(project, graphId);
+  if (at === null || (at.graph.scenario?.allOpen === true) === allOpen) return null;
+  return setScenario(at.index, { values: at.graph.scenario?.values ?? {}, allOpen }, "edit-scenario");
+}
+
+/** Back to start values (keeps "all gates open"). */
+export function resetScenario(project: Project, graphId: Id): Change | null {
+  const at = graphAt(project, graphId);
+  if (at === null || at.graph.scenario === undefined || Object.keys(at.graph.scenario.values).length === 0) return null;
+  return setScenario(at.index, { ...at.graph.scenario, values: {} }, "reset-scenario");
 }

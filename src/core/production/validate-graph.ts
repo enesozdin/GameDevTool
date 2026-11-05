@@ -13,6 +13,7 @@ import { compileNetwork, NodeKind } from "./network.ts";
 import { adjacency, stronglyConnected } from "./scc.ts";
 import { ConditionCompiler, exprIssue } from "../expr/conditions.ts";
 import { checkUnlockOrder } from "./unlocks.ts";
+import { fitsVariable } from "./gates.ts";
 
 export function validateProductionGraph(
   project: Project,
@@ -147,6 +148,17 @@ export function validateProductionGraph(
   }
 
   checkUnlockOrder(graph, catalog, net, conditions, base, issues);
+
+  // Saved scenario values: the solver ignores the ones that do not fit.
+  if (graph.scenario !== undefined) {
+    const variables = new Map(project.manifest.variables.map((v) => [v.id, v]));
+    for (const [id, value] of Object.entries(graph.scenario.values)) {
+      const variable = variables.get(id);
+      const path: IssuePath = [...base, "scenario", "values", id];
+      if (variable === undefined) issues.push({ severity: "warning", code: "scenario-unknown-variable", path });
+      else if (!fitsVariable(variable, value)) issues.push({ severity: "warning", code: "scenario-type-mismatch", path, params: { name: variable.name } });
+    }
+  }
 }
 
 function hasPort(items: readonly Id[], start: Int32Array, node: number, item: Id): boolean {

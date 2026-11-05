@@ -1086,6 +1086,38 @@
               "recipes": {
                 "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
                 "type": "string"
+              },
+              "scenario": {
+                "properties": {
+                  "allOpen": {
+                    "type": "boolean"
+                  },
+                  "values": {
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "maxLength": 10000,
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "propertyNames": {
+                      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+                      "type": "string"
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "values"
+                ],
+                "type": "object"
               }
             },
             "required": [

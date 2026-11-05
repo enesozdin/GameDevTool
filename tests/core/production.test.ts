@@ -12,6 +12,12 @@ import {
   evaluateGates,
   GateStatus,
   scenarioValues,
+  setScenarioValue,
+  setScenarioAllOpen,
+  resetScenario,
+  removeVariable,
+  updateVariable,
+  applyPatches,
   createEmptyProject,
   createHistory,
   createProductionSample,
@@ -370,7 +376,7 @@ describe("gates in the solver and Monte Carlo", () => {
       const catalog = compileCatalog(s.project, s.graph.recipes, s.graph.items);
       const net = compileNetwork(s.graph, catalog);
       const conditions = new ConditionCompiler(s.project.manifest.variables);
-      const gates = evaluateGates(s.graph, catalog, conditions, scenarioValues(conditions, s.project.manifest.variables, overrides));
+      const gates = evaluateGates(s.graph, catalog, conditions, scenarioValues(conditions, s.project.manifest.variables, Object.fromEntries(overrides)));
       return { net, gates };
     };
     const forge = nodeOf(s.graph, (n) => n.type === "recipe" && n.recipe === recipeId(s.recipes, "ForgeIronSword"));
@@ -464,5 +470,71 @@ describe("gates in the solver and Monte Carlo", () => {
     assert.equal(percentiles[[...state.sinks].indexOf(swordSink)]!.p90, 0);
     // Slag still comes out of the unlocked smelter.
     assert.ok(percentiles.some((p) => p.mean > 0));
+  });
+});
+
+describe("saved scenario", () => {
+  it("stores values per chain, undoably, and survives save/load", () => {
+    const { project: p0, graph } = sample();
+    const newId = fixedIds(1_870_000_000_000);
+    const level = { id: newId(), name: "Level", type: "int" as const, default: 1 };
+    const key = { id: newId(), name: "HasKey", type: "bool" as const, default: false };
+    p0.manifest.variables.push(level, key);
+    let project = p0;
+    const apply = (change: ReturnType<typeof setScenarioValue>) => {
+      assert.ok(change !== null);
+      project = applyPatches(project, change.patches).value;
+    };
+    const chain = () => project.assets.find((a) => a.id === graph.id) as ProductionGraphAsset;
+
+    apply(setScenarioValue(project, graph.id, level.id, 4));
+    apply(setScenarioValue(project, graph.id, key.id, true));
+    assert.deepEqual(chain().scenario, { values: { [level.id]: 4, [key.id]: true } });
+    assert.equal(setScenarioValue(project, graph.id, level.id, 4), null);
+    assert.equal(setScenarioValue(project, graph.id, level.id, Number.NaN), null);
+    apply(setScenarioAllOpen(project, graph.id, true));
+    assert.equal(chain().scenario?.allOpen, true);
+
+    const loaded = loadProject(saveProject(project));
+    assert.ok(loaded.ok);
+    assert.deepEqual((loaded.value.project.assets.find((a) => a.id === graph.id) as ProductionGraphAsset).scenario, chain().scenario);
+    assert.deepEqual(validateProject(project).filter((i) => i.code.startsWith("scenario-")), []);
+
+    apply(resetScenario(project, graph.id));
+    assert.deepEqual(chain().scenario, { values: {}, allOpen: true });
+    apply(setScenarioAllOpen(project, graph.id, false));
+    // Nothing left: the field is removed, so the saved chain is unchanged.
+    assert.equal("scenario" in chain(), false);
+  });
+
+  it("drops values when their variable is deleted or retyped; validation warns about leftovers", () => {
+    const { project: p0, graph } = sample();
+    const newId = fixedIds(1_880_000_000_000);
+    const level = { id: newId(), name: "Level", type: "int" as const, default: 1 };
+    const key = { id: newId(), name: "HasKey", type: "bool" as const, default: false };
+    p0.manifest.variables.push(level, key);
+    let project = p0;
+    const apply = (change: ReturnType<typeof setScenarioValue>) => {
+      assert.ok(change !== null);
+      project = applyPatches(project, change.patches).value;
+    };
+    const chain = () => project.assets.find((a) => a.id === graph.id) as ProductionGraphAsset;
+    apply(setScenarioValue(project, graph.id, level.id, 4));
+    apply(setScenarioValue(project, graph.id, key.id, true));
+
+    // Int → float keeps 4; bool → string drops true.
+    apply(updateVariable(project, { ...level, type: "float", default: 0 }));
+    apply(updateVariable(project, { ...key, type: "string", default: "" }));
+    assert.deepEqual(chain().scenario, { values: { [level.id]: 4 } });
+    apply(removeVariable(project, level.id));
+    assert.equal("scenario" in chain(), false);
+
+    // Hand-edited files: unknown variables and wrong types are reported, then ignored.
+    const edited = structuredClone(project);
+    (edited.assets.find((a) => a.id === graph.id) as { scenario?: unknown }).scenario = { values: { [level.id]: 1, [key.id]: 5 } };
+    const codes = validateProject(edited).map((i) => i.code).filter((c) => c.startsWith("scenario-")).sort();
+    assert.deepEqual(codes, ["scenario-type-mismatch", "scenario-unknown-variable"]);
+    const conditions = new ConditionCompiler(edited.manifest.variables);
+    assert.deepEqual(scenarioValues(conditions, edited.manifest.variables, { [key.id]: 5 }), [""]);
   });
 });

@@ -82,6 +82,21 @@ export const GraphEdgeSchema = z.object({
 });
 export type GraphEdge = z.infer<typeof GraphEdgeSchema>;
 
+/** A variable value in a scenario: bool, number, string, or an enum option id. */
+export const ScenarioValueSchema = z.union([z.boolean(), z.number(), z.string().check(z.maxLength(10_000))]);
+
+/**
+ * What-if variable values a chain is calculated with (production/gates.ts). Variables not
+ * listed use their start value. Editor-only: engine exports ignore it.
+ */
+export const ScenarioSchema = z.object({
+  /** Variable id → value. */
+  values: z.record(IdSchema, ScenarioValueSchema),
+  /** Calculate as if every gate were open. Default false. */
+  allOpen: z.optional(z.boolean()),
+});
+export type Scenario = z.infer<typeof ScenarioSchema>;
+
 export const ProductionGraphAssetSchema = z.object({
   id: IdSchema,
   kind: z.literal("production-graph"),
@@ -93,6 +108,7 @@ export const ProductionGraphAssetSchema = z.object({
   recipes: IdSchema,
   nodes: z.array(GraphNodeSchema).check(z.maxLength(GRAPH_LIMITS.nodes)),
   edges: z.array(GraphEdgeSchema).check(z.maxLength(GRAPH_LIMITS.edges)),
+  scenario: z.optional(ScenarioSchema),
 });
 export type ProductionGraphAsset = z.infer<typeof ProductionGraphAssetSchema>;
 

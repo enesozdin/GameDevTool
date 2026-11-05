@@ -8,7 +8,7 @@ export interface ScenarioProps {
   readonly conditions: ConditionCompiler;
   readonly gates: GateState;
   readonly values: readonly Value[];
-  readonly overrides: ReadonlyMap<Id, Value>;
+  readonly overrides: Readonly<Record<Id, Value>>;
   readonly allOpen: boolean;
   readonly onOverride: (variable: Id, value: Value | undefined) => void;
   readonly onReset: () => void;
@@ -17,8 +17,8 @@ export interface ScenarioProps {
 
 /**
  * Variable values the chain is calculated with. Lists only the variables this chain's
- * conditions read. Values are a what-if for the calculation; they are not saved and do
- * not change the variables' start values.
+ * conditions read. Values are saved with the chain (undoable) and never change the
+ * variables' start values.
  */
 export function Scenario({ strings, variables, conditions, gates, values, overrides, allOpen, onOverride, onReset, onAllOpen }: ScenarioProps) {
   const s = strings.production;
@@ -43,7 +43,7 @@ export function Scenario({ strings, variables, conditions, gates, values, overri
           if (variable === undefined) return null;
           const id = `ps-${variable.id}`;
           const value = values[slot]!;
-          const changed = overrides.has(variable.id);
+          const changed = Object.hasOwn(overrides, variable.id);
           const label = changed ? s.scenarioChanged(variable.name) : variable.name;
           const set = (v: Value) => onOverride(variable.id, v === variable.default ? undefined : v);
           switch (variable.type) {
@@ -89,7 +89,7 @@ export function Scenario({ strings, variables, conditions, gates, values, overri
               );
           }
         })}
-      {!allOpen && overrides.size > 0 && (
+      {!allOpen && Object.keys(overrides).length > 0 && (
         <div className="actions">
           <button type="button" onClick={onReset}>
             {s.scenarioReset}

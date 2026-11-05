@@ -122,8 +122,9 @@ Run-time errors stop the evaluation and return an error instead of a value:
 ### Gates in the calculation
 
 The production chain is calculated with a **scenario**: every variable at its start
-value, unless the designer changes it in the editor's Scenario panel (a what-if; it is not
-saved). Against these values:
+value, unless the designer changes it in the editor's Scenario panel. Scenario values are
+saved with each chain (so one chain can show the early game and another the late game),
+can be undone, and never change the variables' start values. Against these values:
 
 - a gate node whose condition is false passes nothing;
 - a recipe whose unlock condition is false does not run;

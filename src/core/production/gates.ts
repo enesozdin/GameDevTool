@@ -1,8 +1,8 @@
 /**
  * Gate evaluation for the solver and Monte Carlo runs (ROADMAP §4.1, Machinations Gate).
  *
- * A scenario gives every project variable a value (start values, optionally overridden
- * in the editor). Against it:
+ * A scenario gives every project variable a value: its start value, unless the graph's
+ * saved `scenario` overrides it. Against it:
  * - a gate node is open when its condition is true; an empty condition is open
  *   (validation warns about it);
  * - a recipe node is unlocked when its recipe's unlock condition is true, or it has none.
@@ -39,21 +39,36 @@ export interface GateState {
   readonly slots: readonly number[];
 }
 
+/** True when `value` is a valid value of `variable` (enum: one of its option ids). */
+export function fitsVariable(variable: Variable, value: Value): boolean {
+  switch (variable.type) {
+    case "bool":
+      return typeof value === "boolean";
+    case "int":
+      return Number.isSafeInteger(value);
+    case "float":
+      return typeof value === "number" && Number.isFinite(value);
+    case "string":
+      return typeof value === "string";
+    case "enum":
+      return variable.options.some((o) => o.id === value);
+  }
+}
+
 /**
- * Variable values for a scenario: start values with `overrides` (by variable id) applied.
- * Overrides of the wrong type, or enum overrides that name no option, are ignored.
+ * Variable values for a scenario: start values with `overrides` (variable id → value)
+ * applied. Overrides that do not fit their variable (validation warns) are ignored.
  */
-export function scenarioValues(conditions: ConditionCompiler, variables: readonly Variable[], overrides: ReadonlyMap<Id, Value>): Value[] {
+export function scenarioValues(conditions: ConditionCompiler, variables: readonly Variable[], overrides: Readonly<Record<Id, Value>> | undefined): Value[] {
   const values = defaultValues(conditions.scope, variables);
-  if (overrides.size === 0) return values;
+  if (overrides === undefined) return values;
+  const byId = new Map<Id, Variable>();
+  for (const v of variables) byId.set(v.id, v);
   for (const entry of conditions.scope.entries) {
-    if (entry.variable === undefined) continue;
-    const v = overrides.get(entry.variable);
-    if (v === undefined) continue;
-    const t = entry.type;
-    const fits =
-      t.kind === "bool" ? typeof v === "boolean" : t.kind === "number" ? typeof v === "number" && Number.isFinite(v) : t.kind === "string" ? typeof v === "string" : t.options.some((o) => o.id === v);
-    if (fits) values[entry.slot] = v;
+    if (entry.variable === undefined || !Object.hasOwn(overrides, entry.variable)) continue;
+    const v = overrides[entry.variable]!;
+    const variable = byId.get(entry.variable);
+    if (variable !== undefined && fitsVariable(variable, v)) values[entry.slot] = v;
   }
   return values;
 }

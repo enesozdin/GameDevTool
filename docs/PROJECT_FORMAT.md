@@ -32,6 +32,11 @@ The Production Chain Editor stores its data in ordinary assets:
 - **Conditions** (gate node `condition`, the recipe role's `gate` column) are stored as
   source text in the [expression language](EXPRESSIONS.md). They refer to
   `manifest.variables` by name; enum variables store option ids.
+- **`scenario`** (optional, on `production-graph` assets): what-if values the chain is
+  calculated with, `{ "values": { "<variable id>": 5 }, "allOpen": true }`. Variables not
+  listed use their start value; enum values are option ids. Deleting a variable or changing
+  its type removes values that no longer fit. Engine exports ignore it. Adding the field was
+  backward compatible (schema version 1).
 
 Adding these kinds was backward compatible: schema version 1 files stay valid.
 
