@@ -16,6 +16,8 @@ import {
   sampleBinomial,
   samplePoisson,
   solveNetwork,
+  createSolveWorkspace,
+  solveSupplyInto,
   startMonteCarlo,
   stepMonteCarlo,
   validateProject,
@@ -150,6 +152,34 @@ describe("solver edge cases", () => {
     const result = solveNetwork(net, "supply", { maxSweeps: 50 });
     assert.equal(result.converged, false);
     assert.ok(result.edgeFlow.every((f) => Number.isFinite(f)));
+  });
+
+  it("a reused workspace gives the same activities as a fresh solve, and counts unsettled runs", () => {
+    const b = builder();
+    const x = b.item("X");
+    const y = b.item("Y");
+    const double = b.recipe("Double", [{ item: x, count: 1 }], [{ item: y, count: 2 }]);
+    const back = b.recipe("Back", [{ item: y, count: 1 }], [{ item: x, count: 1 }]);
+    const source = b.node({ type: "source", item: x, rate: 1 });
+    const a = b.node({ type: "recipe", recipe: double });
+    const c = b.node({ type: "recipe", recipe: back });
+    b.edge(source, a, x);
+    b.edge(a, c, y);
+    b.edge(c, a, x);
+    const sink = b.node({ type: "sink", item: y });
+    b.edge(a, sink, y);
+    const { net } = b.compile();
+    const ws = createSolveWorkspace(net);
+    for (let i = 0; i < 3; i++) {
+      const fresh = solveNetwork(net, "supply", { maxSweeps: 50 });
+      const reused = solveSupplyInto(net, ws, { maxSweeps: 50 });
+      assert.equal(reused.converged, fresh.converged);
+      assert.deepEqual([...ws.activity], [...fresh.activity]);
+    }
+    const options = { runs: 20, seconds: 10, seed: 1 };
+    const state = startMonteCarlo(net, options);
+    while (!stepMonteCarlo(net, state, options, 7));
+    assert.equal(state.unconverged, 20);
   });
 
   it("samples each stack of a merged output port with its own chance", () => {

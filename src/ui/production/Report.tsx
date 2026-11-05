@@ -253,6 +253,7 @@ function MonteCarlo({
           </tbody>
         </table>
       )}
+      {outcome !== null && outcome.unconverged > 0 && <p className="field-error" role="status">{s.simUnconverged(outcome.unconverged, outcome.runs)}</p>}
       {outcome !== null && outcome.sinks.length > REPORT_ROWS && <p className="muted small">{s.reportMoreHidden(outcome.sinks.length - REPORT_ROWS)}</p>}
       {outcome !== null && outcome.histograms[chartSink] !== undefined && (
         <>

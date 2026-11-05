@@ -21,5 +21,5 @@ scope.onmessage = (e) => {
   const state = startMonteCarlo(net, options);
   const total = state.sinks.length === 0 ? 0 : state.samples.length / state.sinks.length;
   while (!stepMonteCarlo(net, state, options, CHUNK)) scope.postMessage({ type: "progress", done: state.done, total });
-  scope.postMessage({ type: "done", result: { runs: state.done, sinks: [...state.sinks], percentiles: monteCarloPercentiles(state), histograms: monteCarloHistograms(state) } });
+  scope.postMessage({ type: "done", result: { runs: state.done, unconverged: state.unconverged, sinks: [...state.sinks], percentiles: monteCarloPercentiles(state), histograms: monteCarloHistograms(state) } });
 };

@@ -400,6 +400,7 @@ export const en = {
     cancel: "Cancel",
     simNoRandomness: "Nothing in this chain is random; the steady-state numbers are exact.",
     simResult: (runs: number) => `Monte Carlo, ${runs} runs, per hour`,
+    simUnconverged: (count: number, runs: number) => `${count} of ${runs} runs did not settle (a loop amplifies itself); their numbers are approximate.`,
     simColumns: { sink: "Sink", p10: "P10", p50: "P50", p90: "P90", mean: "Mean" },
     simChartSink: "Distribution of",
     simChartX: "Items per hour",

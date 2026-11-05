@@ -84,6 +84,48 @@ export interface SolveResult {
 /** Flows below this many items/s count as zero in reports. */
 export const RATE_EPSILON = 1e-9;
 
+/**
+ * Scratch arrays of a supply-driven solve. A caller that solves the same network many
+ * times (Monte Carlo) creates one and reuses it, so a solve allocates nothing.
+ */
+export interface SolveWorkspace {
+  readonly edgeFlow: Float64Array;
+  readonly activity: Float64Array;
+  readonly limit: Uint8Array;
+  readonly limitPort: Int32Array;
+}
+
+export function createSolveWorkspace(net: Network): SolveWorkspace {
+  return {
+    edgeFlow: new Float64Array(net.edgeSource.length),
+    activity: new Float64Array(net.nodeCount),
+    limit: new Uint8Array(net.nodeCount),
+    limitPort: new Int32Array(net.nodeCount),
+  };
+}
+
+/**
+ * Supply-driven solve into `ws`, without building a full `SolveResult`. Starts from zero
+ * flows exactly like `solveNetwork`, so both give identical activities. Returns whether
+ * the flows settled.
+ */
+export function solveSupplyInto(net: Network, ws: SolveWorkspace, options: SolveOptions = {}): { readonly converged: boolean; readonly sweeps: number } {
+  ws.edgeFlow.fill(0);
+  ws.activity.fill(0);
+  ws.limit.fill(0);
+  ws.limitPort.fill(-1);
+  const maxSweeps = options.maxSweeps ?? 500;
+  const tolerance = options.tolerance ?? 1e-10;
+  let sweeps = 0;
+  while (sweeps < maxSweeps) {
+    sweeps++;
+    const change = sweepSupply(net, ws.edgeFlow, ws.activity, ws.limit, ws.limitPort, options);
+    if (!Number.isFinite(change)) break;
+    if (change <= tolerance) return { converged: true, sweeps };
+  }
+  return { converged: false, sweeps };
+}
+
 export function solveNetwork(net: Network, mode: SolveMode, options: SolveOptions = {}): SolveResult {
   const maxSweeps = options.maxSweeps ?? 500;
   const tolerance = options.tolerance ?? 1e-10;

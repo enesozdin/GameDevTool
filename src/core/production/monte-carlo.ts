@@ -17,7 +17,7 @@
 import { createRandom, sampleBinomial, samplePoisson, type Random } from "../random.ts";
 import type { Network } from "./network.ts";
 import { NodeKind } from "./network.ts";
-import { solveNetwork, type SolveResult } from "./solve.ts";
+import { createSolveWorkspace, solveNetwork, solveSupplyInto, type SolveResult, type SolveWorkspace } from "./solve.ts";
 
 export interface MonteCarloOptions {
   readonly runs: number;
@@ -35,6 +35,10 @@ export interface MonteCarloState {
   readonly sinks: Int32Array;
   /** Items per period at each sink, run-major: samples[run * sinks.length + s]. */
   readonly samples: Float64Array;
+  /** Reused by every run, so a run allocates nothing. */
+  readonly workspace: SolveWorkspace;
+  /** Runs whose loops did not settle within the sweep limit (their samples are approximate). */
+  unconverged: number;
   done: number;
 }
 
@@ -66,6 +70,8 @@ export function startMonteCarlo(net: Network, options: MonteCarloOptions): Monte
     base: solveNetwork(net, "supply", { locked: options.locked }),
     sinks: Int32Array.from(sinks),
     samples: new Float64Array(runs * sinks.length),
+    workspace: createSolveWorkspace(net),
+    unconverged: 0,
     done: 0,
   };
 }
@@ -101,9 +107,11 @@ export function stepMonteCarlo(net: Network, state: MonteCarloState, options: Mo
         outScale[p] = sampled / (cycles * net.outCoef[p]!);
       }
     }
-    const result = solveNetwork(net, "supply", { sourceRate, outScale, maxSweeps: 200, locked: options.locked });
+    const { converged } = solveSupplyInto(net, state.workspace, { sourceRate, outScale, maxSweeps: 200, locked: options.locked });
+    if (!converged) state.unconverged++;
+    const activity = state.workspace.activity;
     for (let s = 0; s < state.sinks.length; s++) {
-      state.samples[run * state.sinks.length + s] = result.activity[state.sinks[s]!]! * seconds;
+      state.samples[run * state.sinks.length + s] = activity[state.sinks[s]!]! * seconds;
     }
   }
   state.done = end;

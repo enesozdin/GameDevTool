@@ -9,6 +9,8 @@ export interface SimulationRequest {
 
 export interface SimulationResult {
   readonly runs: number;
+  /** Runs whose loops did not settle; their numbers are approximate. */
+  readonly unconverged: number;
   /** Graph node index of each sink, in the order of `percentiles`. */
   readonly sinks: readonly number[];
   readonly percentiles: readonly Percentiles[];
