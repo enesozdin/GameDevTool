@@ -128,7 +128,7 @@ export function AssetPanel({ strings, asset, referenceCount, onRename, onDelete,
         <dt>{s.usedBy}</dt>
         <dd>{s.references(referenceCount)}</dd>
       </dl>
-      <p className="muted">{s.comingLater[asset.kind]}</p>
+      {s.comingLater[asset.kind] !== undefined && <p className="muted">{s.comingLater[asset.kind]}</p>}
       <div className="actions">
         <button type="button" className="danger" onClick={onDelete}>
           {s.delete}

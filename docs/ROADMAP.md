@@ -309,6 +309,25 @@ the production rate solver, spreadsheet-grade editing and the expression engine 
 where overruns are most likely. The first usable tool, the Production Chain Editor, is
 ready after ~64 days.
 
+### Phase 1 progress
+
+| Part | Status |
+|---|---|
+| Items / Recipes / Machines tables (table roles, `stacks` column type), typed grid editing | ✅ |
+| CSV / TSV import + export, engine-neutral with `generic` and `unreal` formats ([CSV.md](CSV.md)) | ✅ |
+| Production graph asset, reference index, typed connections checked live | ✅ |
+| Steady-state solver: target-driven, supply-driven, machine counts, bottlenecks, surplus/deficit, loops | ✅ |
+| Rate calculator, bill of materials, time to first unit | ✅ (core; BOM + first unit shown for the selected node) |
+| Monte Carlo (seeded xoshiro128**) in a Web Worker, P10/P50/P90 | ✅ |
+| Validation: mismatches, unconnected inputs, loops with no source, unreachable nodes | ✅ |
+| Editor: library with drag & drop, auto layout, rate labels, deficit/bottleneck colors | ✅ |
+| Group nodes for sub-chains (IDEF0 decomposition) | ⏳ |
+| Tag-matched ports ("Any Fuel") | ⏳ |
+| Gate conditions and "used before unlocked" validation | ⏳ needs the expression language |
+| Recipe choice per item in the calculator UI; phone rate-calculator view | ⏳ |
+| Creating enum / reference / list / stacks columns from the UI | ⏳ |
+| Monte Carlo histograms (uPlot) | ⏳ |
+
 ### Backlog (post-MVP)
 - Production chain optimizer: choose between alternative recipes with linear programming
 - Level / flow diagrams (level progression, gating, metroidvania maps)

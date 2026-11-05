@@ -35,13 +35,17 @@ export interface RowNames {
   name(rowId: Id): string | undefined;
   /** Row id in `table` with this name (case-insensitive). */
   find(table: Id, name: string): Id | undefined;
+  /** Rows of `table` in table order (a fresh array). */
+  rowsOf(table: Id): { id: Id; name: string }[];
 }
 
 export function rowNames(project: Project): RowNames {
   const byId = new Map<Id, string>();
   const byTable = new Map<Id, Map<string, Id>>();
+  const tables = new Map<Id, TableAsset>();
   for (const asset of project.assets) {
     if (asset.kind !== "table") continue;
+    tables.set(asset.id, asset);
     const names = new Map<string, Id>();
     for (const row of asset.rows) {
       byId.set(row.id, row.name);
@@ -49,7 +53,11 @@ export function rowNames(project: Project): RowNames {
     }
     byTable.set(asset.id, names);
   }
-  return { name: (id) => byId.get(id), find: (table, name) => byTable.get(table)?.get(name.toLowerCase()) };
+  return {
+    name: (id) => byId.get(id),
+    find: (table, name) => byTable.get(table)?.get(name.toLowerCase()),
+    rowsOf: (table) => (tables.get(table)?.rows ?? []).map((r) => ({ id: r.id, name: r.name })),
+  };
 }
 
 // ---------------------------------------------------------------------------------------

@@ -24,6 +24,30 @@ const outFile = "GameDevTool.html";
 
 const pkg = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")) as { version: string };
 
+const target = ["es2022", "chrome111", "edge111", "firefox115", "safari16.4"];
+
+// Workers are bundled first and inlined into the app as strings; the app starts them from
+// Blob URLs (CSP: worker-src blob:).
+const workerBuild = await esbuild.build({
+  absWorkingDir: root,
+  entryPoints: ["src/app/workers/monte-carlo.worker.ts"],
+  outdir: "dist/.bundle",
+  write: false,
+  bundle: true,
+  format: "iife",
+  platform: "browser",
+  target,
+  minify: true,
+  sourcemap: false,
+  legalComments: "eof",
+  tsconfig: "src/tsconfig.json",
+  define: { "process.env.NODE_ENV": '"production"' },
+  metafile: true,
+  logLevel: "warning",
+});
+const workerSource = workerBuild.outputFiles.find((f) => f.path.endsWith(".js"))?.text ?? "";
+if (workerSource.length === 0) throw new Error("Empty worker bundle");
+
 const result = await esbuild.build({
   absWorkingDir: root,
   entryPoints: ["src/app/main.tsx"],
@@ -32,7 +56,7 @@ const result = await esbuild.build({
   bundle: true,
   format: "iife",
   platform: "browser",
-  target: ["es2022", "chrome111", "edge111", "firefox115", "safari16.4"],
+  target,
   minify: true,
   sourcemap: false,
   legalComments: "eof", // License notices of bundled packages stay in the file.
@@ -41,6 +65,7 @@ const result = await esbuild.build({
   define: {
     "process.env.NODE_ENV": '"production"',
     __APP_VERSION__: JSON.stringify(pkg.version),
+    __MONTE_CARLO_WORKER__: JSON.stringify(workerSource),
   },
   metafile: true,
   logLevel: "warning",
@@ -81,7 +106,7 @@ await writeFile(path.join(distDir, "THIRD_PARTY_NOTICES.txt"), await buildNotice
 
 console.log(`dist/${outFile}`);
 console.log(`  size     ${kb(bytes.length)} (gzip ${kb(gzipSync(bytes, { level: 9 }).length)})`);
-console.log(`  js       ${kb(Buffer.byteLength(script))}, css ${kb(Buffer.byteLength(style))}`);
+console.log(`  js       ${kb(Buffer.byteLength(script))} (incl. worker ${kb(Buffer.byteLength(workerSource))}), css ${kb(Buffer.byteLength(style))}`);
 console.log(`  sha256   ${sha256}`);
 console.log("  by package (minified bytes in output):");
 for (const [name, size] of [...byPackage].sort((a, b) => b[1] - a[1])) {

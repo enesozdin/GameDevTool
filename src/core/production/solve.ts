@@ -3,7 +3,8 @@
  *
  * Target-driven ("target"): sink rates are demands. Demand flows upstream: each node runs
  * just fast enough for its most demanded output; by-products that nobody asks for become
- * surplus. Source rates are capacities (0 = unlimited); exceeding one is a deficit.
+ * surplus, which drains into connected sinks without a target. Source rates are
+ * capacities (0 = unlimited); exceeding one is a deficit.
  *
  * Supply-driven ("supply"): source rates are fixed supplies. Flow moves downstream: each
  * recipe runs as fast as its scarcest input (and its built machines, if set) allows. The
@@ -98,7 +99,38 @@ export function solveNetwork(net: Network, mode: SolveMode, options: SolveOption
     }
   }
 
+  if (mode === "target") drainSurplus(net, edgeFlow, activity);
   return report(net, mode, converged, sweeps, edgeFlow, activity, limit, limitPort);
+}
+
+/**
+ * Target mode: sinks without a target rate are drains (selling, trash, decay). Surplus
+ * output (by-products nobody asked for) flows into them, so the chain shows where it goes.
+ * Only direct connections from the producing port are followed.
+ */
+function drainSurplus(net: Network, flow: Float64Array, activity: Float64Array): void {
+  for (let u = 0; u < net.nodeCount; u++) {
+    for (let p = net.outStart[u]!; p < net.outStart[u + 1]!; p++) {
+      let used = 0;
+      let weights = 0;
+      for (let k = net.outEdgeStart[p]!; k < net.outEdgeStart[p + 1]!; k++) {
+        const e = net.outEdges[k]!;
+        used += flow[e]!;
+        const t = net.edgeTarget[e]!;
+        if (net.kind[t] === NodeKind.sink && Number.isNaN(net.rate[t]!)) weights += net.edgeWeight[e]!;
+      }
+      const surplus = activity[u]! * net.outCoef[p]! - used;
+      if (weights === 0 || !(surplus > RATE_EPSILON)) continue;
+      for (let k = net.outEdgeStart[p]!; k < net.outEdgeStart[p + 1]!; k++) {
+        const e = net.outEdges[k]!;
+        const t = net.edgeTarget[e]!;
+        if (net.kind[t] !== NodeKind.sink || !Number.isNaN(net.rate[t]!)) continue;
+        const add = (surplus * net.edgeWeight[e]!) / weights;
+        flow[e]! += add;
+        activity[t]! += add;
+      }
+    }
+  }
 }
 
 /**

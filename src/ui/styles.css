@@ -445,3 +445,359 @@ input[aria-invalid="true"] {
     transition: none !important;
   }
 }
+
+/* ---- Shared small controls --------------------------------------------------------- */
+
+select {
+  font: inherit;
+  color: inherit;
+  min-height: 32px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.small {
+  font-size: 0.8125rem;
+}
+
+input[type="text"].narrow {
+  width: 180px;
+}
+
+button.icon {
+  min-height: 28px;
+  min-width: 28px;
+  padding: 0 6px;
+  border-color: transparent;
+  background: none;
+  color: var(--muted);
+}
+
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.segmented button.is-on {
+  background: var(--selected);
+  border-color: var(--accent);
+}
+
+@media (pointer: coarse) {
+  select,
+  button.icon {
+    min-height: 44px;
+  }
+}
+
+/* ---- Production chain editor ------------------------------------------------------- */
+
+.peditor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: max(520px, 78vh);
+}
+
+.pbody {
+  display: grid;
+  grid-template-columns: 220px 1fr 280px;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.pside {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.pside h3,
+.preport h4 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 0.9375rem;
+}
+
+.plib,
+.pinspector,
+.preport {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.plib {
+  flex: 1 1 auto;
+  min-height: 240px;
+}
+
+.plib-list {
+  flex: 1 1 auto;
+  min-height: 120px;
+  overflow: auto;
+  contain: strict;
+}
+
+.plib-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.plib-heading {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.plib-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 34px;
+  text-align: left;
+  cursor: grab;
+}
+
+.pcanvas {
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.pnode {
+  position: relative;
+  width: 260px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--fg);
+  font-size: 0.8125rem;
+}
+
+.pnode.is-selected {
+  outline: 2px solid var(--accent);
+}
+
+.pnode.has-deficit,
+.pnode.is-bottleneck {
+  border-color: var(--danger);
+}
+
+.pnode-source { border-left: 4px solid #3a9d5d; }
+.pnode-sink { border-left: 4px solid #b0662a; }
+.pnode-recipe { border-left: 4px solid var(--accent); }
+.pnode-gate { border-left: 4px solid var(--warn); }
+
+.pnode-head {
+  display: flex;
+  flex-direction: column;
+}
+
+.pnode-type {
+  color: var(--muted);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pnode-title {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pnode-port {
+  position: absolute;
+  max-width: 50%;
+  overflow: hidden;
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pnode-port-in {
+  left: 10px;
+}
+
+.pnode-port-out {
+  right: 10px;
+  text-align: right;
+}
+
+.pnode-port .react-flow__handle {
+  width: 10px;
+  height: 10px;
+}
+
+.pnode-port-in .react-flow__handle { left: -15px; }
+.pnode-port-out .react-flow__handle { right: -15px; }
+
+.pnode-port.is-warn {
+  color: var(--danger);
+}
+
+.pnode-foot {
+  position: absolute;
+  bottom: 6px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  font-size: 0.75rem;
+}
+
+.pnode-bad {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.react-flow__edge.pedge-flow .react-flow__edge-path { stroke: var(--accent); stroke-width: 2; }
+.react-flow__edge.pedge-short .react-flow__edge-path { stroke: var(--danger); stroke-width: 2; }
+.react-flow__edge.pedge-invalid .react-flow__edge-path { stroke: var(--danger); stroke-dasharray: 4 4; }
+.react-flow__edge.pedge-idle .react-flow__edge-path { stroke: var(--muted); }
+
+.bom,
+.bom ul {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 0.8125rem;
+}
+
+.ptable {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.ptable caption {
+  text-align: left;
+  color: var(--muted);
+}
+
+.ptable th,
+.ptable td {
+  padding: 2px 4px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+}
+
+.ptable th[scope="row"],
+.ptable th:first-child {
+  text-align: left;
+}
+
+/* Tablets: library and inspector stack below the canvas. */
+@media (max-width: 1100px) {
+  .peditor {
+    height: auto;
+  }
+
+  .pbody {
+    grid-template-columns: 1fr;
+  }
+
+  .pcanvas {
+    height: 70vh;
+  }
+}
+
+/* ---- Table editor ------------------------------------------------------------------ */
+
+.teditor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: max(420px, 70vh);
+}
+
+.tgrid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.tgrid-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8125rem;
+}
+
+.tgrid-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+
+.tcell {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  width: 180px;
+  padding: 2px 4px;
+  border-right: 1px solid var(--border);
+}
+
+.tcell-name {
+  width: 200px;
+}
+
+.tcell-action {
+  width: 48px;
+  border-right: 0;
+}
+
+.tcell input[type="text"],
+.tcell select {
+  width: 100%;
+  min-height: 32px;
+  padding: 2px 6px;
+}
+
+.tcol-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tcol-type {
+  color: var(--muted);
+  font-size: 0.6875rem;
+}
+
+.tgrid-empty {
+  padding: 12px;
+}

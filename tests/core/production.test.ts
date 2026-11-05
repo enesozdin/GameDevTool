@@ -82,6 +82,9 @@ describe("target-driven solve", () => {
     // Slag (10% chance) is a by-product: produced, and the slag sink has no demand.
     const slagPort = net.outItem.findIndex((item, p) => item === itemId(items, "Slag") && p >= net.outStart[smelt]! && p < net.outStart[smelt + 1]!);
     close(r.outProduced[slagPort]!, 0.1 * 3 * sword);
+    // ...and drains into the slag sink, which has no target.
+    const slagSink = nodeOf(graph, (n) => n.type === "sink" && n.item === itemId(items, "Slag"));
+    close(r.activity[slagSink]!, 0.1 * 3 * sword);
   });
 
   it("reports a deficit when a source capacity is exceeded", () => {

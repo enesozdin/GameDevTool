@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   addAsset,
+  addAssets,
+  createProductionGraph,
+  createProductionSample,
+  createProductionTables,
+  findProductionTables,
   buildReferenceIndex,
   createDocument,
   createEmptyProject,
@@ -27,12 +32,16 @@ import {
   type Project,
 } from "../core/index.ts";
 import { VirtualListbox } from "../ui/components/VirtualListbox.tsx";
+import { ProductionEditor } from "../ui/production/ProductionEditor.tsx";
+import { TableEditor } from "../ui/tables/TableEditor.tsx";
 import type { UiStrings } from "../ui/strings.ts";
 import { AssetPanel, incomingReferenceCount, ProjectPanel } from "./panels.tsx";
 import { initialState, isDirty, reducer } from "./state.ts";
 import { defaultFileName, downloadProject, pickProjectFile, readProjectFile } from "./storage/project-file.ts";
 import { createFolderIo, ensureWritable, isFolderModeSupported, pickProjectFolder } from "./storage/project-folder.ts";
 import { clearRecovery, readLatestRecovery, writeRecovery, type RecoveryEntry } from "./storage/recovery.ts";
+import { downloadText, pickTextFile } from "./storage/text-file.ts";
+import { createSimulationService } from "./simulation.ts";
 
 /** Debounce for the crash-recovery write. Flushed immediately when the tab is hidden. */
 const RECOVERY_DELAY_MS = 1_500;
@@ -68,6 +77,7 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
   const [recovery, setRecovery] = useState<RecoveryEntry | null>(null);
   const [saving, setSaving] = useState(false);
   const folderMode = useMemo(isFolderModeSupported, []);
+  const simulation = useMemo(createSimulationService, []);
   /** Set while the project's target is a folder. Kept outside the reducer: it holds a handle. */
   const folder = useRef<OpenFolder | null>(null);
   /** Guards against overlapping saves (e.g. Ctrl+S pressed again while writing). */
@@ -225,6 +235,25 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
     add(asset: Asset) {
       commitChange(addAsset(project, asset));
       setSelectedId(asset.id);
+    },
+    /** A production chain on the project's Items/Recipes tables, created with them if missing. */
+    addProduction() {
+      const existing = findProductionTables(project);
+      if (existing !== null) {
+        const graph = createProductionGraph(newId, strings.untitledProduction, existing);
+        commitChange(addAsset(project, graph));
+        setSelectedId(graph.id);
+        return;
+      }
+      const tables = createProductionTables(newId, strings.productionTableNames);
+      const graph = createProductionGraph(newId, strings.productionTableNames.graph, tables);
+      commitChange(addAssets(project, [tables.items, tables.machines, tables.recipes, graph], "add-production-graph"));
+      setSelectedId(graph.id);
+    },
+    addExample() {
+      const { tables, graph } = createProductionSample(newId, strings.exampleProductionNames);
+      commitChange(addAssets(project, [tables.items, tables.machines, tables.recipes, graph], "add-production-graph"));
+      setSelectedId(graph.id);
     },
     remove(asset: Asset) {
       const refs = incomingReferenceCount(index, asset);
@@ -421,6 +450,12 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
             <button type="button" onClick={() => actions.add(createTable(newId, strings.untitledTable))}>
               {strings.assets.addTable}
             </button>
+            <button type="button" onClick={actions.addProduction}>
+              {strings.assets.addProduction}
+            </button>
+            <button type="button" onClick={actions.addExample}>
+              {strings.assets.addExample}
+            </button>
           </div>
           {project.assets.length === 0 ? (
             <p className="muted">{strings.assets.empty}</p>
@@ -444,14 +479,32 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
 
         <main className="details" id="main" tabIndex={-1}>
           {selected !== undefined ? (
-            <AssetPanel
-              strings={strings}
-              asset={selected}
-              referenceCount={referenceCount}
-              onRename={(name) => commitChange(renameAsset(project, selected.id, name))}
-              onDelete={() => actions.remove(selected)}
-              onBack={() => setSelectedId(null)}
-            />
+            <>
+              <AssetPanel
+                strings={strings}
+                asset={selected}
+                referenceCount={referenceCount}
+                onRename={(name) => commitChange(renameAsset(project, selected.id, name))}
+                onDelete={() => actions.remove(selected)}
+                onBack={() => setSelectedId(null)}
+              />
+              {selected.kind === "table" && (
+                <TableEditor
+                  key={selected.id}
+                  strings={strings}
+                  project={project}
+                  table={selected}
+                  newId={newId}
+                  commit={commitChange}
+                  saveFile={downloadText}
+                  pickTextFile={pickTextFile}
+                  notify={(text, kind) => setNotice({ text, kind })}
+                />
+              )}
+              {selected.kind === "production-graph" && (
+                <ProductionEditor key={selected.id} strings={strings} project={project} graph={selected} newId={newId} commit={commitChange} simulation={simulation} />
+              )}
+            </>
           ) : (
             <ProjectPanel
               strings={strings}

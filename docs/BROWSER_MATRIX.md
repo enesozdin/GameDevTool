@@ -30,6 +30,8 @@ Legend: ✅ verified working · ❌ verified not available · ⏳ not yet tested
 | 10 | Folder mode, external change | With the folder open, edit an asset file from outside, then edit the same asset in the app and save → "changed outside GameDevTool" confirmation appears |
 | 11 | Touch | Buttons ≥ 44 px, no hover-only UI, layout fits a 360 px wide screen |
 | 12 | Keyboard only | Tab reaches skip link, toolbar, asset list, details; focus ring always visible; arrow keys + Enter select in the asset list |
+| 13 | Production chain + worker | "Example chain" → canvas shows 6 nodes with rates; Supply-driven marks MineIronOre as bottleneck; Simulate finishes with a P10/P50/P90 table (Web Worker from a Blob URL, no CSP violation) |
+| 14 | CSV round trip | Recipes table → Export CSV (both formats) → Import CSV of the same file → no changes, no problems reported |
 
 ## Results
 
@@ -49,6 +51,8 @@ Legend: ✅ verified working · ❌ verified not available · ⏳ not yet tested
 | 10 External change | ⏳ | ✅ (picker simulated) | ⏳ | ➖ | ➖ | ➖ | ➖ |
 | 11 Touch | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ |
 | 12 Keyboard only | ✅ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
+| 13 Production chain + worker | ✅ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
+| 14 CSV round trip | ⏳ (core tests ✅) | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
 
 ### Mobile (hosted mode only, see ROADMAP §6)
 
@@ -63,6 +67,12 @@ Legend: ✅ verified working · ❌ verified not available · ⏳ not yet tested
 | 11 Touch | ⏳ | ⏳ (Pixel 7 emulation ✅) |
 
 ## Notes
+
+- **2026-11-05, Chromium (headless, Playwright outside the repo), file://:** check 13:
+  example chain renders 6 nodes with rate labels, supply-driven mode marks MineIronOre as
+  the bottleneck, the Monte Carlo worker starts from a Blob URL and returns P10/P50/P90
+  (Slag 78 / 90 / 101 per hour). Table cell edit + Ctrl+Z works. Zero console messages,
+  so no CSP violations.
 
 - **2026-11-04, Chromium 153 (Chrome for Testing), headless, automated with the
   pre-installed Playwright 1.63 outside the repo** (Playwright is not a project

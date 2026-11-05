@@ -15,6 +15,25 @@ trailing newline. Saving the same data always produces the same bytes.
 
 One JSON document: `{ "manifest": { … }, "assets": [ … ] }`.
 
+## Production data
+
+The Production Chain Editor stores its data in ordinary assets:
+
+- **Table roles.** A table can have a `role` (`items`, `recipes`, `machines`) that maps
+  meanings to column ids, e.g. `{ "kind": "recipes", "inputs": "<col>", "outputs": "<col>",
+  "time": "<col>", "machine": "<col>" }`. Columns can be renamed and extra columns added
+  freely; validation checks that each mapped column exists and has a suitable type.
+- **`stacks` columns** hold item amounts: `[{ "item": "<row id>", "count": 2, "chance": 0.1 }]`.
+  `chance` (0–1, default 1) marks by-products and rare outputs.
+- **`production-graph` assets** name their items and recipes tables and hold `nodes`
+  (source, recipe, storage, sink, splitter, merger, gate; each with a position) and
+  `edges` (`source`, `target`, `item`, optional `ratio`). Rates are stored in items per
+  second; the project's `rateUnit` setting only changes the display.
+
+Adding these kinds was backward compatible: schema version 1 files stay valid.
+
+Tables export to engine-neutral CSV; see [CSV.md](CSV.md).
+
 ## Project folder
 
     MyGame/

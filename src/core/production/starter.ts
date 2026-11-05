@@ -6,6 +6,7 @@
 import type { IdGenerator } from "../ids.ts";
 import type { Id } from "../model/primitives.ts";
 import type { GraphEdge, GraphNode, ProductionGraphAsset } from "../model/production-graph.ts";
+import type { Project } from "../model/project.ts";
 import type { Column, ItemStack, Row, TableAsset } from "../model/table.ts";
 import { autoLayout } from "./layout.ts";
 
@@ -71,6 +72,20 @@ export function createProductionTables(newId: IdGenerator, names: ProductionName
     rows: [],
   };
   return { items, machines, recipes };
+}
+
+/** The first recipes table and the items table its inputs point to, if both exist. */
+export function findProductionTables(project: Project): Pick<ProductionTables, "items" | "recipes"> | null {
+  for (const recipes of project.assets) {
+    if (recipes.kind !== "table" || recipes.role?.kind !== "recipes") continue;
+    const inputsId = recipes.role.inputs;
+    const inputs = recipes.columns.find((c) => c.id === inputsId);
+    if (inputs?.type.kind !== "stacks") continue;
+    const itemsId = inputs.type.table;
+    const items = project.assets.find((a) => a.id === itemsId);
+    if (items?.kind === "table" && items.role?.kind === "items") return { items, recipes };
+  }
+  return null;
 }
 
 export function createProductionGraph(newId: IdGenerator, name: string, tables: Pick<ProductionTables, "items" | "recipes">): ProductionGraphAsset {
