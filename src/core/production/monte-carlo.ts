@@ -133,6 +133,62 @@ export function monteCarloPercentiles(state: MonteCarloState): Percentiles[] {
   return out;
 }
 
+export interface Histogram {
+  /** Left edge of the first bin. */
+  readonly start: number;
+  /** Bin width (> 0). */
+  readonly width: number;
+  /** Runs per bin. */
+  readonly counts: Uint32Array;
+}
+
+/**
+ * Distribution of items per period at each sink, for charts, in at most `maxBins` bins.
+ * Whole-number results get bins of a whole width with edges halfway between values (one
+ * bin per value when the range is small); everything else gets equal bins from min to max.
+ * O(runs × sinks), no sorting.
+ */
+export function monteCarloHistograms(state: MonteCarloState, maxBins = 40): Histogram[] {
+  const sinks = state.sinks.length;
+  const bins = Math.max(1, Math.floor(maxBins));
+  const out: Histogram[] = [];
+  for (let s = 0; s < sinks; s++) {
+    let min = Infinity;
+    let max = -Infinity;
+    let whole = true;
+    for (let r = 0; r < state.done; r++) {
+      const v = state.samples[r * sinks + s]!;
+      if (!Number.isFinite(v)) continue;
+      if (v < min) min = v;
+      if (v > max) max = v;
+      // Counts come out of rate × seconds, so allow floating-point noise (55.00000000000001).
+      if (whole && Math.abs(v - Math.round(v)) > 1e-9 * Math.max(1, Math.abs(v))) whole = false;
+    }
+    if (min > max) {
+      out.push({ start: 0, width: 1, counts: new Uint32Array(0) });
+      continue;
+    }
+    // Whole numbers: bins of a whole width with edges halfway between values, so every bin
+    // holds the same number of possible values (no comb pattern). Otherwise equal bins.
+    const discrete = whole || min === max;
+    if (whole) {
+      min = Math.round(min);
+      max = Math.round(max);
+    }
+    const width = discrete ? Math.max(1, Math.ceil((max - min + 1) / bins)) : (max - min) / bins;
+    const start = discrete ? min - 0.5 : min;
+    const counts = new Uint32Array(discrete ? Math.ceil((max - min + 1) / width) : bins);
+    const last = counts.length - 1;
+    for (let r = 0; r < state.done; r++) {
+      const v = state.samples[r * sinks + s]!;
+      if (!Number.isFinite(v)) continue;
+      counts[Math.min(last, Math.max(0, Math.floor(((whole ? Math.round(v) : v) - start) / width)))]!++;
+    }
+    out.push({ start, width, counts });
+  }
+  return out;
+}
+
 /** Linear interpolation between order statistics (type 7, as in spreadsheets). */
 function quantile(sorted: Float64Array, q: number): number {
   if (sorted.length === 0) return 0;

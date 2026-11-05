@@ -3,7 +3,7 @@
  * (worker-src blob: in the CSP). One run per worker: the app terminates it when the run
  * ends, is cancelled, or the tab is hidden, so no idle worker stays alive.
  */
-import { compileCatalog, compileNetwork, monteCarloPercentiles, startMonteCarlo, stepMonteCarlo, type Project } from "../../core/index.ts";
+import { compileCatalog, compileNetwork, monteCarloHistograms, monteCarloPercentiles, startMonteCarlo, stepMonteCarlo, type Project } from "../../core/index.ts";
 import type { SimulationRequest, SimulationResult } from "../../ui/production/simulation.ts";
 
 export type WorkerMessage = { readonly type: "progress"; readonly done: number; readonly total: number } | { readonly type: "done"; readonly result: SimulationResult };
@@ -21,5 +21,5 @@ scope.onmessage = (e) => {
   const state = startMonteCarlo(net, options);
   const total = state.sinks.length === 0 ? 0 : state.samples.length / state.sinks.length;
   while (!stepMonteCarlo(net, state, options, CHUNK)) scope.postMessage({ type: "progress", done: state.done, total });
-  scope.postMessage({ type: "done", result: { runs: state.done, sinks: [...state.sinks], percentiles: monteCarloPercentiles(state) } });
+  scope.postMessage({ type: "done", result: { runs: state.done, sinks: [...state.sinks], percentiles: monteCarloPercentiles(state), histograms: monteCarloHistograms(state) } });
 };

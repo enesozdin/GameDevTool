@@ -15,6 +15,7 @@ import {
   type SolveResult,
 } from "../../core/index.ts";
 import { itemName } from "./context.ts";
+import { HistogramChart } from "./HistogramChart.tsx";
 import type { UiStrings } from "../strings.ts";
 import { formatNumber, formatRate, type RateUnit } from "./format.ts";
 import type { SimulationHandle, SimulationResult, SimulationService } from "./simulation.ts";
@@ -179,6 +180,7 @@ function MonteCarlo({
   const s = strings.production;
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [outcome, setOutcome] = useState<SimulationResult | null>(null);
+  const [chartSink, setChartSink] = useState(0);
   const handle = useRef<SimulationHandle | null>(null);
   const random = hasRandomness(network);
 
@@ -199,7 +201,10 @@ function MonteCarlo({
       if (handle.current !== run) return;
       handle.current = null;
       setProgress(null);
-      if (r !== null) setOutcome(r);
+      if (r !== null) {
+        setOutcome(r);
+        setChartSink(0);
+      }
     });
   };
 
@@ -249,6 +254,30 @@ function MonteCarlo({
         </table>
       )}
       {outcome !== null && outcome.sinks.length > REPORT_ROWS && <p className="muted small">{s.reportMoreHidden(outcome.sinks.length - REPORT_ROWS)}</p>}
+      {outcome !== null && outcome.histograms[chartSink] !== undefined && (
+        <>
+          {outcome.sinks.length > 1 && (
+            <div className="field">
+              <label htmlFor="psim-chart-sink">{s.simChartSink}</label>
+              <select id="psim-chart-sink" value={chartSink} onChange={(e) => setChartSink(Number(e.target.value))}>
+                {outcome.sinks.slice(0, REPORT_ROWS).map((u, i) => (
+                  <option key={u} value={i}>
+                    {u < graph.nodes.length ? title(u) : u}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <HistogramChart
+            histogram={outcome.histograms[chartSink]!}
+            percentiles={outcome.percentiles[chartSink]!}
+            label={s.simChartLabel(title(outcome.sinks[chartSink]!), formatNumber(outcome.percentiles[chartSink]!.p10), formatNumber(outcome.percentiles[chartSink]!.p50), formatNumber(outcome.percentiles[chartSink]!.p90))}
+            xLabel={s.simChartX}
+            yLabel={s.simChartY}
+          />
+          <p className="muted small">{s.simChartHint}</p>
+        </>
+      )}
     </div>
   );
 }

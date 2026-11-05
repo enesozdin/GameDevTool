@@ -809,6 +809,13 @@ button.icon {
   text-align: left;
 }
 
+/* Monte Carlo histogram (uPlot canvas). */
+.phist {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
 /* Rate calculator: item picker beside the target on wide screens, stacked on phones. */
 .pcalc {
   min-width: 0;

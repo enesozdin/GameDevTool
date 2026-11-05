@@ -1,4 +1,4 @@
-import type { Asset, MonteCarloOptions, Percentiles, ProductionGraphAsset } from "../../core/index.ts";
+import type { Asset, Histogram, MonteCarloOptions, Percentiles, ProductionGraphAsset } from "../../core/index.ts";
 
 /** What a Monte Carlo run needs: the graph and the tables it reads. Structured-cloneable. */
 export interface SimulationRequest {
@@ -12,6 +12,8 @@ export interface SimulationResult {
   /** Graph node index of each sink, in the order of `percentiles`. */
   readonly sinks: readonly number[];
   readonly percentiles: readonly Percentiles[];
+  /** Items per period at each sink, binned (same order as `sinks`). */
+  readonly histograms: readonly Histogram[];
 }
 
 export interface SimulationHandle {

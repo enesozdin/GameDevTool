@@ -329,7 +329,7 @@ ready after ~64 days.
 | Gates in the solver / Monte Carlo: conditions evaluated against a scenario of variable values, locked nodes run at 0 | ✅ |
 | Rate calculator view: target item + rate, recipe choice per item (saved with the chain, also used by the bill of materials), machines, raw totals; default view on phones | ✅ |
 | Creating enum / reference / list / stacks / localizable text columns from the UI (enum options, target table, list item type) | ✅ |
-| Monte Carlo histograms (uPlot) | ⏳ |
+| Monte Carlo histograms (uPlot): binned in the worker, one chart for the chosen sink, P10/P50/P90 lines, light/dark | ✅ |
 
 ### Backlog (post-MVP)
 - Production chain optimizer: choose between alternative recipes with linear programming
