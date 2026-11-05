@@ -175,6 +175,7 @@ export const en = {
       "calculator-recipe-mismatch": "Rate calculator: the chosen recipe no longer makes this item",
       "stack-tag-not-allowed": "Tags (#Tag) are only allowed in recipe inputs",
       "tag-no-items": "No item has this tag",
+      "tag-invalid": "Item tags must be an identifier (letters, digits, _), or no recipe input can use them",
       "group-missing": "Refers to a group that does not exist",
       "group-cycle": "Group is inside itself",
       "group-too-deep": "Groups are nested too deeply",

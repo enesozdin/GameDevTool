@@ -2,7 +2,7 @@ import type { Issue, IssuePath } from "../result.ts";
 import type { EnumOption, Id } from "./primitives.ts";
 import type { Project } from "./project.ts";
 import { buildReferenceIndex, type ReferenceIndex } from "./references.ts";
-import { isTagStack, type CellValue, type Column, type ColumnType, type ScalarType, type TableAsset } from "./table.ts";
+import { isTagStack, TAG_PATTERN, type CellValue, type Column, type ColumnType, type ScalarType, type TableAsset } from "./table.ts";
 import { ULID_PATTERN } from "../ids.ts";
 import type { Asset } from "./project.ts";
 import { validateProductionGraph } from "../production/validate-graph.ts";
@@ -279,9 +279,11 @@ function validateRole(table: TableAsset, assetIndex: number, assets: ReadonlyMap
   };
 
   switch (role.kind) {
-    case "items":
-      check("tags", role.tags, isStringList);
+    case "items": {
+      const tags = check("tags", role.tags, isStringList);
+      if (tags !== undefined) checkItemTags(table, tags.id, assetIndex, issues);
       return;
+    }
     case "recipes": {
       const inputs = check("inputs", role.inputs, isStacks);
       const outputs = check("outputs", role.outputs, isStacks);
@@ -310,6 +312,22 @@ function validateRole(table: TableAsset, assetIndex: number, assets: ReadonlyMap
       checkTableRole("buildCost", check("buildCost", role.buildCost, isStacks), "items");
       return;
   }
+}
+
+/**
+ * Warns about item tags that no tag input can name: recipe inputs write tags as identifiers
+ * (`#Fuel`), so a tag with a space or a symbol on an item is never matched.
+ */
+function checkItemTags(table: TableAsset, column: Id, assetIndex: number, issues: Issue[]): void {
+  table.rows.forEach((row, r) => {
+    const value = row.cells[column];
+    if (!Array.isArray(value)) return;
+    value.forEach((tag, i) => {
+      if (typeof tag === "string" && !TAG_PATTERN.test(tag)) {
+        issues.push({ severity: "warning", code: "tag-invalid", path: ["assets", assetIndex, "rows", r, "cells", column, i], params: { tag } });
+      }
+    });
+  });
 }
 
 /** Warns about tag stacks that no item of the items table carries. */

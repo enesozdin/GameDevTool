@@ -122,6 +122,17 @@ describe("tag inputs", () => {
     assert.ok(codes.includes("tag-no-items"));
   });
 
+  it("warns about item tags that no tag input could name", () => {
+    const { project, tables, item } = setup();
+    const tagsColumn = tables.items.columns[0]!.id;
+    assert.deepEqual(validateProject(project).filter((i) => i.code === "tag-invalid"), []);
+    const row = tables.items.rows.find((r) => r.id === item("Coal"))!;
+    row.cells[tagsColumn] = ["Fuel", "Fuel Source", "Hot!"];
+    const bad = validateProject(project).filter((i) => i.code === "tag-invalid");
+    assert.deepEqual(bad.map((i) => i.params?.["tag"]), ["Fuel Source", "Hot!"]);
+    assert.ok(bad.every((i) => i.severity === "warning"));
+  });
+
   it("round-trips through the project file and rejects malformed tags", () => {
     const { project, recipe, tables } = setup();
     const loaded = loadProject(saveProject(project));

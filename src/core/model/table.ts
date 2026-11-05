@@ -130,7 +130,8 @@ export type ItemStack = z.infer<typeof ItemStackSchema>;
  * Item tag as used by tag stacks: an identifier, matched case-insensitively against the
  * items table's tags column (e.g. "Fuel").
  */
-export const TagSchema = z.string().check(z.regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/));
+export const TAG_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+export const TagSchema = z.string().check(z.regex(TAG_PATTERN));
 
 /**
  * "Any item with this tag" in a recipe input, e.g. `{ "tag": "Fuel", "count": 1 }`. Only
