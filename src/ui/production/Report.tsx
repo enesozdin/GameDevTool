@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   billOfMaterials,
-  defaultRecipeChoice,
   hasRandomness,
   NodeKind,
   timeToFirstUnit,
@@ -12,6 +11,7 @@ import {
   type Network,
   type ProductionGraphAsset,
   type Project,
+  type RecipeChoice,
   type SolveResult,
 } from "../../core/index.ts";
 import { itemName } from "./context.ts";
@@ -24,6 +24,8 @@ export interface ReportProps {
   readonly project: Project;
   readonly graph: ProductionGraphAsset;
   readonly catalog: Catalog;
+  /** Recipe per item for the bill of materials (the calculator's saved choice). */
+  readonly choice: RecipeChoice;
   readonly network: Network;
   readonly result: SolveResult;
   readonly unit: RateUnit;
@@ -47,7 +49,7 @@ function largest<T>(list: readonly T[], key: (t: T) => number, limit = REPORT_RO
   return { shown: [...list].sort((a, b) => key(b) - key(a)).slice(0, limit), hidden: list.length - limit };
 }
 
-export function Report({ strings, project, graph, catalog, network: net, result, unit, selected, simulation, locked }: ReportProps) {
+export function Report({ strings, project, graph, catalog, choice, network: net, result, unit, selected, simulation, locked }: ReportProps) {
   const s = strings.production;
   const name = (id: Id) => itemName({ catalog, strings }, id);
   const rate = (v: number) => formatRate(v, unit, s.perUnit);
@@ -78,9 +80,8 @@ export function Report({ strings, project, graph, catalog, network: net, result,
   const focusItem = selected?.type === "recipe" ? catalog.recipes.get(selected.recipe)?.outputs[0]?.item : selected?.type === "sink" ? selected.item : undefined;
   const plan = useMemo(() => {
     if (focusItem === undefined) return null;
-    const choice = defaultRecipeChoice(catalog);
     return { bom: billOfMaterials(choice, focusItem, 1, BOM_ROWS), first: timeToFirstUnit(choice, focusItem) };
-  }, [catalog, focusItem]);
+  }, [choice, focusItem]);
 
   const title = (u: number) => {
     const node = graph.nodes[u]!;
@@ -141,7 +142,7 @@ function Fact({ term, value }: { term: string; value: string }) {
   );
 }
 
-function BomTree({ node, name, cycle }: { node: BomNode; name: (id: Id) => string; cycle: string }) {
+export function BomTree({ node, name, cycle }: { node: BomNode; name: (id: Id) => string; cycle: string }) {
   return (
     <li>
       {formatNumber(node.quantity)} × {name(node.item)}

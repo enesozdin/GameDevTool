@@ -161,6 +161,20 @@ export function validateProductionGraph(
       else if (!fitsVariable(variable, value)) issues.push({ severity: "warning", code: "scenario-type-mismatch", path, params: { name: variable.name } });
     }
   }
+
+  // Saved calculator settings: the calculator ignores the ones that do not fit.
+  if (graph.calculator !== undefined) {
+    const calc = graph.calculator;
+    if (calc.target !== undefined && !catalog.items.has(calc.target)) {
+      issues.push({ severity: "warning", code: "calculator-unknown-item", path: [...base, "calculator", "target"] });
+    }
+    for (const [item, recipeId] of Object.entries(calc.recipes ?? {})) {
+      const recipe = catalog.recipes.get(recipeId);
+      if (!catalog.items.has(item) || recipe === undefined || !recipe.outputs.some((o) => o.item === item)) {
+        issues.push({ severity: "warning", code: "calculator-recipe-mismatch", path: [...base, "calculator", "recipes", item] });
+      }
+    }
+  }
 }
 
 /** Broken group structure; groupStructure() treats the affected parts as top level. */

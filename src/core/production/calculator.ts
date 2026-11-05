@@ -9,6 +9,7 @@
  * tagged item it stays the raw entry "#Fuel".
  */
 import type { Id } from "../model/primitives.ts";
+import type { Calculator } from "../model/production-graph.ts";
 import { isTagStack, type Stack } from "../model/table.ts";
 import { cycleSeconds, expectedCount, tagKey, type Catalog, type CatalogRecipe } from "./catalog.ts";
 
@@ -36,6 +37,30 @@ export function defaultRecipeChoice(catalog: Catalog, overrides: ReadonlyMap<Id,
     if (recipe !== undefined && recipe.outputs.some((o) => o.item === item)) choice.set(item, recipe);
   }
   return choice;
+}
+
+/** The recipe choice a chain's saved calculator settings describe (stale picks ignored). */
+export function savedRecipeChoice(catalog: Catalog, calculator: Calculator | undefined): ReturnType<typeof defaultRecipeChoice> {
+  const picks = calculator?.recipes;
+  return defaultRecipeChoice(catalog, picks === undefined ? undefined : new Map(Object.entries(picks)));
+}
+
+/**
+ * Recipes that output each item, in table order. Only items with two or more recipes are
+ * listed: those are the ones the designer can choose for.
+ */
+export function recipeAlternatives(catalog: Catalog): ReadonlyMap<Id, readonly CatalogRecipe[]> {
+  const all = new Map<Id, CatalogRecipe[]>();
+  for (const recipe of catalog.recipes.values()) {
+    for (const out of recipe.outputs) {
+      const list = all.get(out.item);
+      if (list === undefined) all.set(out.item, [recipe]);
+      // A recipe that lists an item twice is still one alternative.
+      else if (list[list.length - 1] !== recipe) list.push(recipe);
+    }
+  }
+  for (const [item, list] of all) if (list.length < 2) all.delete(item);
+  return all;
 }
 
 export interface RateLine {

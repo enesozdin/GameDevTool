@@ -103,6 +103,24 @@ export const ScenarioSchema = z.object({
 export type Scenario = z.infer<typeof ScenarioSchema>;
 
 /**
+ * Settings of the rate calculator ("1 Iron Sword per minute" → everything upstream,
+ * production/calculator.ts). It works on the recipe data, not on the chain's nodes.
+ * Editor-only: engine exports ignore it.
+ */
+export const CalculatorSchema = z.object({
+  /** Item row to make. */
+  target: z.optional(IdSchema),
+  /** Target rate in items/s. */
+  rate: z.optional(rate),
+  /**
+   * Item row id → recipe row id used to make it, when several recipes output the item.
+   * Items not listed use the first recipe (table order) that outputs them.
+   */
+  recipes: z.optional(z.record(IdSchema, IdSchema)),
+});
+export type Calculator = z.infer<typeof CalculatorSchema>;
+
+/**
  * A sub-chain (IDEF0 hierarchical decomposition). Groups only organize the canvas: the
  * calculation always runs on the flat node list. A collapsed group is drawn as one node
  * whose ports are the connections crossing its boundary. Groups nest through `parent`.
@@ -131,6 +149,7 @@ export const ProductionGraphAssetSchema = z.object({
   /** Sub-chains; stored only when the chain has any. */
   groups: z.optional(z.array(GraphGroupSchema).check(z.maxLength(GRAPH_LIMITS.groups))),
   scenario: z.optional(ScenarioSchema),
+  calculator: z.optional(CalculatorSchema),
 });
 export type ProductionGraphAsset = z.infer<typeof ProductionGraphAssetSchema>;
 

@@ -42,6 +42,13 @@ The Production Chain Editor stores its data in ordinary assets:
   listed use their start value; enum values are option ids. Deleting a variable or changing
   its type removes values that no longer fit. Engine exports ignore it. Adding the field was
   backward compatible (schema version 1).
+- **`calculator`** (optional, on `production-graph` assets): rate calculator settings,
+  `{ "target": "<item row id>", "rate": 0.0166, "recipes": { "<item row id>": "<recipe row id>" } }`.
+  `rate` is in items per second; `recipes` holds the designer's pick where several recipes
+  output the same item (items not listed use the first such recipe in table order). Picks
+  that no longer fit are ignored and reported as warnings. Empty settings are stored as no
+  field. Engine exports ignore it. Adding the field was backward compatible (schema
+  version 1).
 
 - **`groups`** (optional, on `production-graph` assets): sub-chains,
   `[{ "id": "<ULID>", "label": "Smelting", "parent": "<group id>", "collapsed": true }]`.

@@ -27,8 +27,13 @@ import {
   loadProject,
   monteCarloPercentiles,
   planRates,
+  recipeAlternatives,
   removeGraphElements,
+  resetRecipeChoices,
+  savedRecipeChoice,
   saveProject,
+  setRecipeChoice,
+  updateCalculator,
   solveNetwork,
   startMonteCarlo,
   stepMonteCarlo,
@@ -267,6 +272,82 @@ describe("calculator", () => {
     const first = timeToFirstUnit(choice, sword);
     assert.equal(first.seconds, 2 + 4 + 10);
     assert.deepEqual(first.path, [itemId(items, "IronOre"), itemId(items, "IronBar"), sword]);
+  });
+});
+
+describe("calculator settings", () => {
+  /** The sample plus a second way to make iron bars: no fuel, more ore. */
+  function withAlternative() {
+    const s = sample();
+    const [inputsCol, outputsCol, timeCol] = s.recipes.columns;
+    const ore = itemId(s.items, "IronOre");
+    const bar = itemId(s.items, "IronBar");
+    const fast = { id: fixedIds(1_890_000_000_000)(), name: "SmeltNoFuel", cells: { [inputsCol!.id]: [{ item: ore, count: 3 }], [outputsCol!.id]: [{ item: bar, count: 1 }], [timeCol!.id]: 2 } };
+    s.recipes.rows.push(fast);
+    let project = s.project;
+    const apply = (change: ReturnType<typeof updateCalculator>) => {
+      assert.ok(change !== null);
+      project = applyPatches(project, change.patches).value;
+    };
+    const chain = () => project.assets.find((a) => a.id === s.graph.id) as ProductionGraphAsset;
+    return { ...s, fast, bar, apply, chain, current: () => project };
+  }
+
+  it("lists alternative recipes per item and plans with the saved pick", () => {
+    const { graph, items, fast, bar, apply, chain, current } = withAlternative();
+    const catalog = compileCatalog(current(), graph.recipes);
+    const alternatives = recipeAlternatives(catalog);
+    assert.deepEqual([...alternatives.keys()], [bar]);
+    assert.deepEqual(alternatives.get(bar)!.map((r) => r.name), ["SmeltIronBar", "SmeltNoFuel"]);
+
+    const sword = itemId(items, "IronSword");
+    apply(updateCalculator(current(), graph.id, { target: sword, rate: 1 / 60 }));
+    apply(setRecipeChoice(current(), graph.id, bar, fast.id));
+    assert.deepEqual(chain().calculator, { target: sword, rate: 1 / 60, recipes: { [bar]: fast.id } });
+    assert.equal(setRecipeChoice(current(), graph.id, bar, fast.id), null);
+
+    const plan = planRates(savedRecipeChoice(compileCatalog(current(), graph.recipes), chain().calculator), sword, 1 / 60);
+    assert.ok(plan.converged);
+    assert.equal(plan.raw.has(itemId(items, "Coal")), false); // no fuel needed any more
+    const barLine = plan.lines.find((l) => l.item === bar)!;
+    assert.equal(barLine.recipe?.id, fast.id);
+    close(barLine.machines, (3 / 60) * 2);
+
+    // A stale pick (the recipe no longer makes the item) is ignored and reported.
+    const edited = structuredClone(current());
+    (edited.assets.find((a) => a.id === graph.id) as ProductionGraphAsset).calculator = { target: "01ZZZZZZZZZZZZZZZZZZZZZZZZ", recipes: { [bar]: recipeId(edited.assets.find((a) => a.id === graph.recipes) as TableAsset, "ForgeIronSword") } };
+    const codes = validateProject(edited).map((i) => i.code).filter((c) => c.startsWith("calculator-")).sort();
+    assert.deepEqual(codes, ["calculator-recipe-mismatch", "calculator-unknown-item"]);
+    const stale = savedRecipeChoice(compileCatalog(edited, graph.recipes), (edited.assets.find((a) => a.id === graph.id) as ProductionGraphAsset).calculator);
+    assert.equal(stale.get(bar)?.name, "SmeltIronBar");
+  });
+
+  it("is saved with the chain, undoably; empty settings leave no field", () => {
+    const { graph, items, fast, bar, apply, chain, current } = withAlternative();
+    const sword = itemId(items, "IronSword");
+    assert.equal(updateCalculator(current(), graph.id, { rate: -1 }), null);
+    assert.equal(updateCalculator(current(), graph.id, { rate: Number.NaN }), null);
+    apply(updateCalculator(current(), graph.id, { target: sword }));
+    assert.equal(updateCalculator(current(), graph.id, { target: sword }), null);
+    const rateChange = updateCalculator(current(), graph.id, { rate: 0.5 })!;
+    assert.equal(rateChange.coalesceKey, `calculator-rate:${graph.id}`);
+    apply(rateChange);
+    apply(setRecipeChoice(current(), graph.id, bar, fast.id));
+
+    const loaded = loadProject(saveProject(current()));
+    assert.ok(loaded.ok);
+    assert.deepEqual((loaded.value.project.assets.find((a) => a.id === graph.id) as ProductionGraphAsset).calculator, chain().calculator);
+    assert.deepEqual(validateProject(current()).filter((i) => i.code.startsWith("calculator-")), []);
+
+    apply(resetRecipeChoices(current(), graph.id));
+    assert.deepEqual(chain().calculator, { target: sword, rate: 0.5 });
+    assert.equal(resetRecipeChoices(current(), graph.id), null);
+
+    // Only a recipe pick: removing it removes the field.
+    const { graph: g2, fast: f2, bar: b2, apply: apply2, chain: chain2, current: current2 } = withAlternative();
+    apply2(setRecipeChoice(current2(), g2.id, b2, f2.id));
+    apply2(setRecipeChoice(current2(), g2.id, b2, undefined));
+    assert.equal("calculator" in chain2(), false);
   });
 });
 

@@ -6,7 +6,7 @@ import type { Change, Patch } from "../history.ts";
 import type { Id } from "../model/primitives.ts";
 import type { Asset, Project } from "../model/project.ts";
 import { MAX_ASSETS } from "../model/project.ts";
-import { GRAPH_LIMITS, type GraphEdge, type GraphGroup, type GraphNode, type Position, type ProductionGraphAsset, type Scenario } from "../model/production-graph.ts";
+import { GRAPH_LIMITS, type GraphEdge, type GraphGroup, type GraphNode, type Calculator, type Position, type ProductionGraphAsset, type Scenario } from "../model/production-graph.ts";
 import { keyAccepts, stackKey, type Catalog } from "./catalog.ts";
 import { containerOf, descendantGroups, descendantNodes, groupStructure } from "./groups.ts";
 
@@ -299,4 +299,55 @@ export function resetScenario(project: Project, graphId: Id): Change | null {
   const at = graphAt(project, graphId);
   if (at === null || at.graph.scenario === undefined || Object.keys(at.graph.scenario.values).length === 0) return null;
   return setScenario(at.index, { ...at.graph.scenario, values: {} }, "reset-scenario");
+}
+
+// ---------------------------------------------------------------------------------------
+// Rate calculator settings (see calculator.ts)
+// ---------------------------------------------------------------------------------------
+
+/** Writes the calculator settings; empty settings are stored as no field. */
+function setCalculator(index: number, next: Calculator, label: string, coalesceKey?: string): Change {
+  const value: Calculator = {};
+  if (next.target !== undefined) value.target = next.target;
+  if (next.rate !== undefined) value.rate = next.rate;
+  if (next.recipes !== undefined && Object.keys(next.recipes).length > 0) value.recipes = next.recipes;
+  const change: Change = { label, patches: [{ op: "set", path: ["assets", index, "calculator"], value: Object.keys(value).length === 0 ? undefined : value }] };
+  return coalesceKey === undefined ? change : { ...change, coalesceKey };
+}
+
+/**
+ * Sets the calculator's target item and / or rate (items/s). Typing a rate, or stepping
+ * through the item list with the arrow keys, coalesces into one undo step.
+ */
+export function updateCalculator(project: Project, graphId: Id, fields: { readonly target?: Id; readonly rate?: number }): Change | null {
+  const at = graphAt(project, graphId);
+  if (at === null) return null;
+  const prev = at.graph.calculator ?? {};
+  if (fields.rate !== undefined && !(fields.rate >= 0 && fields.rate <= GRAPH_LIMITS.rate)) return null;
+  const target = fields.target ?? prev.target;
+  const rate = fields.rate ?? prev.rate;
+  if (target === prev.target && rate === prev.rate) return null;
+  const rateOnly = fields.target === undefined || fields.target === prev.target;
+  return setCalculator(at.index, { ...prev, target, rate }, "edit-calculator", rateOnly ? `calculator-rate:${graphId}` : `calculator-target:${graphId}`);
+}
+
+/** Picks the recipe that makes `item` in the calculator; `undefined` = back to the default. */
+export function setRecipeChoice(project: Project, graphId: Id, item: Id, recipe: Id | undefined): Change | null {
+  const at = graphAt(project, graphId);
+  if (at === null) return null;
+  const prev = at.graph.calculator ?? {};
+  const picks = prev.recipes ?? {};
+  if (recipe === undefined ? !Object.hasOwn(picks, item) : picks[item] === recipe) return null;
+  const recipes = { ...picks };
+  if (recipe === undefined) delete recipes[item];
+  else recipes[item] = recipe;
+  return setCalculator(at.index, { ...prev, recipes }, "choose-recipe");
+}
+
+/** Every item back to its default recipe. */
+export function resetRecipeChoices(project: Project, graphId: Id): Change | null {
+  const at = graphAt(project, graphId);
+  const prev = at?.graph.calculator;
+  if (at === null || prev?.recipes === undefined) return null;
+  return setCalculator(at.index, { ...prev, recipes: undefined }, "reset-recipe-choices");
 }

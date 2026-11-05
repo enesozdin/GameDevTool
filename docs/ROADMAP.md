@@ -317,7 +317,7 @@ ready after ~64 days.
 | CSV / TSV import + export, engine-neutral with `generic` and `unreal` formats ([CSV.md](CSV.md)) | ✅ |
 | Production graph asset, reference index, typed connections checked live | ✅ |
 | Steady-state solver: target-driven, supply-driven, machine counts, bottlenecks, surplus/deficit, loops | ✅ |
-| Rate calculator, bill of materials, time to first unit | ✅ (core; BOM + first unit shown for the selected node) |
+| Rate calculator, bill of materials, time to first unit | ✅ |
 | Monte Carlo (seeded xoshiro128**) in a Web Worker, P10/P50/P90 | ✅ |
 | Validation: mismatches, unconnected inputs, loops with no source, unreachable nodes | ✅ |
 | Editor: library with drag & drop, auto layout, rate labels, deficit/bottleneck colors | ✅ |
@@ -327,7 +327,7 @@ ready after ~64 days.
 | Project variables editor (bool, int, float, string, enum); renames rewrite conditions | ✅ |
 | Gate conditions (live errors in the inspector) and "used before unlocked" validation | ✅ |
 | Gates in the solver / Monte Carlo: conditions evaluated against a scenario of variable values, locked nodes run at 0 | ✅ |
-| Recipe choice per item in the calculator UI; phone rate-calculator view | ⏳ |
+| Rate calculator view: target item + rate, recipe choice per item (saved with the chain), raw resources, BOM, first unit; opens first on phones | ✅ |
 | Creating enum / reference / list / stacks columns from the UI | ⏳ |
 | Monte Carlo histograms (uPlot) | ⏳ |
 

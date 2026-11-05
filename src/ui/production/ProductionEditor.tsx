@@ -12,6 +12,7 @@ import {
   type IsValidConnection,
   type Node,
   type NodeChange,
+  type Viewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
@@ -42,7 +43,11 @@ import {
   moveNodes,
   RATE_EPSILON,
   removeGraphElements,
+  resetRecipeChoices,
+  savedRecipeChoice,
   setEdgeRatio,
+  setRecipeChoice,
+  updateCalculator,
   solveNetwork,
   updateNode,
   type Change,
@@ -57,10 +62,10 @@ import {
   type Value,
 } from "../../core/index.ts";
 
-const NO_OVERRIDES: Readonly<Record<Id, Value>> = {};
 import type { UiStrings } from "../strings.ts";
+import { Calculator } from "./Calculator.tsx";
 import { ProductionContext, type ProductionView } from "./context.ts";
-import { formatRate } from "./format.ts";
+import { formatRate, UNIT_SECONDS } from "./format.ts";
 import { Inspector } from "./Inspector.tsx";
 import { DRAG_MIME, Library, type LibraryDrop } from "./Library.tsx";
 import { GroupFrame, GroupNode } from "./GroupNode.tsx";
@@ -68,6 +73,13 @@ import { inHandle, outHandle, ProductionNode } from "./ProductionNode.tsx";
 import { Report } from "./Report.tsx";
 import { Scenario } from "./Scenario.tsx";
 import type { SimulationService } from "./simulation.ts";
+
+const NO_OVERRIDES: Readonly<Record<Id, Value>> = {};
+
+/** Same breakpoint as the phone layout in styles.css. */
+const isPhone = () => window.matchMedia("(max-width: 720px)").matches;
+
+type EditorView = "canvas" | "calculator";
 
 export interface ProductionEditorProps {
   readonly strings: UiStrings;
@@ -103,6 +115,15 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
   const unit = project.manifest.settings.rateUnit;
   const [mode, setMode] = useState<SolveMode>("target");
   const flow = useReactFlow();
+  // Phones open on the rate calculator (ROADMAP §6.1): the canvas is only mounted once it
+  // is first shown, and unmounted while the calculator is shown, so it costs nothing there.
+  const [shown, setShown] = useState<EditorView>(() => (isPhone() ? "calculator" : "canvas"));
+  const viewport = useRef<Viewport | undefined>(undefined);
+  const showView = (next: EditorView) => {
+    if (next === shown) return;
+    if (shown === "canvas") viewport.current = flow.getViewport();
+    setShown(next);
+  };
 
   // The catalog only depends on the three tables; other edits keep the same object.
   const find = (id: Id | undefined) => (id === undefined ? undefined : project.assets.find((a) => a.id === id));
@@ -136,6 +157,8 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
   const nodesById = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph.nodes]);
   const structure = useMemo(() => groupStructure(graph), [graph.groups, graph.nodes]);
   const collapsed = useMemo(() => summarizeCollapsed(calcGraph, structure, network, result, locked), [calcGraph, structure, network, result, locked]);
+  const recipePicks = graph.calculator?.recipes;
+  const choice = useMemo(() => savedRecipeChoice(catalog, recipePicks === undefined ? undefined : { recipes: recipePicks }), [catalog, recipePicks]);
 
   // Latest values for callbacks that must stay stable (node components, React Flow handlers).
   const latest = useRef({ project, graph, structure, commit });
@@ -313,6 +336,11 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
     else if (canGroup) groupSelection();
   };
 
+  const selectedItem =
+    selectedNode === undefined ? undefined : selectedNode.type === "recipe" ? catalog.recipes.get(selectedNode.recipe)?.outputs[0]?.item : selectedNode.item;
+  const calculatorTarget = (item: Id) =>
+    commit(updateCalculator(project, graph.id, { target: item, rate: graph.calculator?.rate ?? 1 / UNIT_SECONDS[unit] }));
+
   if (catalog.itemsTable === undefined || catalog.recipesTable === undefined) {
     return <p className="field-error">{s.noTables}</p>;
   }
@@ -321,85 +349,115 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
     <ProductionContext.Provider value={view}>
       <div className="peditor">
         <div className="toolbar" role="toolbar" aria-label={s.mode}>
-          <div className="segmented" role="radiogroup" aria-label={s.mode}>
-            <button type="button" role="radio" aria-checked={mode === "target"} className={mode === "target" ? "is-on" : undefined} title={s.modeTargetHint} onClick={() => setMode("target")}>
-              {s.modeTarget}
+          <div className="segmented" role="radiogroup" aria-label={s.view}>
+            <button type="button" role="radio" aria-checked={shown === "canvas"} className={shown === "canvas" ? "is-on" : undefined} title={s.viewCanvasHint} onClick={() => showView("canvas")}>
+              {s.viewCanvas}
             </button>
-            <button type="button" role="radio" aria-checked={mode === "supply"} className={mode === "supply" ? "is-on" : undefined} title={s.modeSupplyHint} onClick={() => setMode("supply")}>
-              {s.modeSupply}
+            <button type="button" role="radio" aria-checked={shown === "calculator"} className={shown === "calculator" ? "is-on" : undefined} title={s.viewCalculatorHint} onClick={() => showView("calculator")}>
+              {s.viewCalculator}
             </button>
           </div>
-          <button type="button" onClick={() => commit(moveNodes(project, graph.id, autoLayout(graph), "auto-layout"))}>
-            {s.autoLayout}
-          </button>
-          <button type="button" onClick={() => void flow.fitView({ duration: 200 })}>
-            {s.fitView}
-          </button>
-          <button type="button" disabled={!canGroup} title={selectedNodes.length > 0 && !canGroup ? s.groupMixedHint : s.groupHint} onClick={groupSelection}>
-            {s.group}
-          </button>
-          <button type="button" disabled={selectedGroup === undefined} title={s.ungroupHint} onClick={ungroupSelection}>
-            {s.ungroup}
-          </button>
+          {shown === "canvas" && (
+            <>
+              <div className="segmented" role="radiogroup" aria-label={s.mode}>
+                <button type="button" role="radio" aria-checked={mode === "target"} className={mode === "target" ? "is-on" : undefined} title={s.modeTargetHint} onClick={() => setMode("target")}>
+                  {s.modeTarget}
+                </button>
+                <button type="button" role="radio" aria-checked={mode === "supply"} className={mode === "supply" ? "is-on" : undefined} title={s.modeSupplyHint} onClick={() => setMode("supply")}>
+                  {s.modeSupply}
+                </button>
+              </div>
+              <button type="button" onClick={() => commit(moveNodes(project, graph.id, autoLayout(graph), "auto-layout"))}>
+                {s.autoLayout}
+              </button>
+              <button type="button" onClick={() => void flow.fitView({ duration: 200 })}>
+                {s.fitView}
+              </button>
+              <button type="button" disabled={!canGroup} title={selectedNodes.length > 0 && !canGroup ? s.groupMixedHint : s.groupHint} onClick={groupSelection}>
+                {s.group}
+              </button>
+              <button type="button" disabled={selectedGroup === undefined} title={s.ungroupHint} onClick={ungroupSelection}>
+                {s.ungroup}
+              </button>
+            </>
+          )}
         </div>
-        <div className="pbody">
-          <aside className="pside">
-            <Library strings={strings} catalog={catalog} onAdd={(d) => addFromLibrary(d)} />
-          </aside>
-          <div className="pcanvas" aria-label={s.canvasLabel} onDragOver={(e) => e.dataTransfer.types.includes(DRAG_MIME) && e.preventDefault()} onDrop={onDrop} onKeyDown={onCanvasKeyDown}>
-            <ReactFlow
-              nodes={rfNodes}
-              edges={rfEdges}
-              nodeTypes={nodeTypes}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onNodeDragStop={onNodeDragStop}
-              onConnect={onConnect}
-              isValidConnection={isValidConnection}
-              onDelete={({ nodes, edges }) => deleteSelection(nodes, edges.map((e) => e.id))}
-              onNodeDoubleClick={(_, n) => n.type !== "production" && toggleGroup(n.id)}
-              onlyRenderVisibleElements
-              fitView
-              minZoom={0.1}
-              deleteKeyCode={["Delete", "Backspace"]}
-              colorMode="system"
-            >
-              <Background />
-              <Controls showInteractive={false} />
-            </ReactFlow>
-          </div>
-          <aside className="pside">
-            <Inspector
+        {shown === "calculator" ? (
+          <div className="pcalc-view">
+            <Calculator
               strings={strings}
               catalog={catalog}
-              conditions={conditions}
+              settings={graph.calculator}
+              choice={choice}
               unit={unit}
-              node={selectedNode}
-              group={selectedGroup}
-              groupNodeCount={selectedGroup === undefined ? 0 : descendantNodes(structure, selectedGroup.id).length}
-              edge={selectedEdge}
-              selectionSize={selectedNodes.length + selectedEdges.size}
-              onNodeChange={(id, fields) => commit(updateNode(project, graph.id, id, fields))}
-              onEdgeRatio={(id, ratio) => commit(setEdgeRatio(project, graph.id, id, ratio))}
-              onGroupChange={(id, fields) => commit(updateGroup(project, graph.id, id, fields))}
-              onUngroup={ungroupSelection}
-              onDelete={() => deleteSelection(selectedNodes, selectedEdges)}
+              selectedItem={selectedItem}
+              onTarget={calculatorTarget}
+              onRate={(rate) => commit(updateCalculator(project, graph.id, { rate }))}
+              onChoose={(item, recipe) => commit(setRecipeChoice(project, graph.id, item, recipe))}
+              onResetChoices={() => commit(resetRecipeChoices(project, graph.id))}
             />
-            <Scenario
-              strings={strings}
-              variables={variables}
-              conditions={conditions}
-              gates={gates}
-              values={values}
-              overrides={overrides ?? NO_OVERRIDES}
-              allOpen={allOpen}
-              onOverride={(id, value) => commit(setScenarioValue(project, graph.id, id, value))}
-              onReset={() => commit(resetScenario(project, graph.id))}
-              onAllOpen={(open) => commit(setScenarioAllOpen(project, graph.id, open))}
-            />
-            <Report strings={strings} project={project} graph={graph} catalog={catalog} network={network} result={result} unit={unit} selected={selectedNode} simulation={simulation} locked={locked} />
-          </aside>
-        </div>
+          </div>
+        ) : (
+          <div className="pbody">
+            <aside className="pside">
+              <Library strings={strings} catalog={catalog} onAdd={(d) => addFromLibrary(d)} />
+            </aside>
+            <div className="pcanvas" aria-label={s.canvasLabel} onDragOver={(e) => e.dataTransfer.types.includes(DRAG_MIME) && e.preventDefault()} onDrop={onDrop} onKeyDown={onCanvasKeyDown}>
+              <ReactFlow
+                nodes={rfNodes}
+                edges={rfEdges}
+                nodeTypes={nodeTypes}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onNodeDragStop={onNodeDragStop}
+                onConnect={onConnect}
+                isValidConnection={isValidConnection}
+                onDelete={({ nodes, edges }) => deleteSelection(nodes, edges.map((e) => e.id))}
+                onNodeDoubleClick={(_, n) => n.type !== "production" && toggleGroup(n.id)}
+                onlyRenderVisibleElements
+                fitView={viewport.current === undefined}
+                defaultViewport={viewport.current}
+                minZoom={0.1}
+                deleteKeyCode={["Delete", "Backspace"]}
+                colorMode="system"
+              >
+                <Background />
+                <Controls showInteractive={false} />
+              </ReactFlow>
+            </div>
+            <aside className="pside">
+              <Inspector
+                strings={strings}
+                catalog={catalog}
+                conditions={conditions}
+                unit={unit}
+                node={selectedNode}
+                group={selectedGroup}
+                groupNodeCount={selectedGroup === undefined ? 0 : descendantNodes(structure, selectedGroup.id).length}
+                edge={selectedEdge}
+                selectionSize={selectedNodes.length + selectedEdges.size}
+                onNodeChange={(id, fields) => commit(updateNode(project, graph.id, id, fields))}
+                onEdgeRatio={(id, ratio) => commit(setEdgeRatio(project, graph.id, id, ratio))}
+                onGroupChange={(id, fields) => commit(updateGroup(project, graph.id, id, fields))}
+                onUngroup={ungroupSelection}
+                onDelete={() => deleteSelection(selectedNodes, selectedEdges)}
+              />
+              <Scenario
+                strings={strings}
+                variables={variables}
+                conditions={conditions}
+                gates={gates}
+                values={values}
+                overrides={overrides ?? NO_OVERRIDES}
+                allOpen={allOpen}
+                onOverride={(id, value) => commit(setScenarioValue(project, graph.id, id, value))}
+                onReset={() => commit(resetScenario(project, graph.id))}
+                onAllOpen={(open) => commit(setScenarioAllOpen(project, graph.id, open))}
+              />
+              <Report strings={strings} project={project} graph={graph} catalog={catalog} choice={choice} network={network} result={result} unit={unit} selected={selectedNode} simulation={simulation} locked={locked} />
+            </aside>
+          </div>
+        )}
       </div>
     </ProductionContext.Provider>
   );
