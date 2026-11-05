@@ -58,6 +58,7 @@ export function validateProject(project: Project, index: ReferenceIndex = buildR
     } else if (asset.kind === "production-graph") {
       asset.nodes.forEach((node, i) => claimId(node.id, () => ["assets", assetIndex, "nodes", i, "id"]));
       asset.edges.forEach((edge, i) => claimId(edge.id, () => ["assets", assetIndex, "edges", i, "id"]));
+      asset.groups?.forEach((group, i) => claimId(group.id, () => ["assets", assetIndex, "groups", i, "id"]));
       validateProductionGraph(project, asset, assetIndex, assetsById, issues, conditions);
     }
   });

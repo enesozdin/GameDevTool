@@ -1,6 +1,7 @@
-import type { Catalog, ConditionCompiler, GraphEdge, GraphNode, Id } from "../../core/index.ts";
+import type { Catalog, ConditionCompiler, GraphEdge, GraphGroup, GraphNode, Id } from "../../core/index.ts";
 import { GRAPH_LIMITS } from "../../core/index.ts";
 import { ConditionField } from "../components/ConditionField.tsx";
+import { NameField } from "../components/NameField.tsx";
 import { NumberField } from "../components/NumberField.tsx";
 import type { UiStrings } from "../strings.ts";
 import { UNIT_SECONDS, type RateUnit } from "./format.ts";
@@ -11,17 +12,22 @@ export interface InspectorProps {
   readonly conditions: ConditionCompiler;
   readonly unit: RateUnit;
   readonly node: GraphNode | undefined;
+  /** Selected sub-chain, and the number of nodes inside it at any depth. */
+  readonly group: GraphGroup | undefined;
+  readonly groupNodeCount: number;
   readonly edge: GraphEdge | undefined;
   readonly selectionSize: number;
   readonly onNodeChange: (nodeId: Id, fields: Record<string, unknown>) => void;
   readonly onEdgeRatio: (edgeId: Id, ratio: number | undefined) => void;
+  readonly onGroupChange: (groupId: Id, fields: { label?: string; collapsed?: boolean }) => void;
+  readonly onUngroup: () => void;
   readonly onDelete: () => void;
 }
 
 /** Avoids 0.1 × 60 → 6.000000000000001 in the fields. */
 const tidy = (n: number) => Number(n.toPrecision(12));
 
-export function Inspector({ strings, catalog, conditions, unit, node, edge, selectionSize, onNodeChange, onEdgeRatio, onDelete }: InspectorProps) {
+export function Inspector({ strings, catalog, conditions, unit, node, group, groupNodeCount, edge, selectionSize, onNodeChange, onEdgeRatio, onGroupChange, onUngroup, onDelete }: InspectorProps) {
   const s = strings.production;
   const factor = UNIT_SECONDS[unit];
   const unitName = s.unitName[unit] ?? unit;
@@ -55,7 +61,29 @@ export function Inspector({ strings, catalog, conditions, unit, node, edge, sele
       <h3 id="pinspector-heading">
         {s.inspector}
         {node !== undefined && <span className="badge">{s.nodeType[node.type]}</span>}
+        {group !== undefined && <span className="badge">{s.nodeType["group"]}</span>}
       </h3>
+      {group !== undefined && (
+        <div key={group.id}>
+          <NameField
+            id="pi-group-name"
+            label={s.fieldGroupName}
+            value={group.label}
+            invalidMessage={strings.tables.invalidValue}
+            isValid={(v) => v.trim().length >= 1 && v.length <= 200}
+            onCommit={(label) => onGroupChange(group.id, { label })}
+          />
+          <p className="muted small">{s.groupNodes(groupNodeCount)}</p>
+          <div className="actions">
+            <button type="button" onClick={() => onGroupChange(group.id, { collapsed: group.collapsed !== true })}>
+              {group.collapsed === true ? s.expand : s.collapse}
+            </button>
+            <button type="button" title={s.ungroupHint} onClick={onUngroup}>
+              {s.ungroup}
+            </button>
+          </div>
+        </div>
+      )}
       {node !== undefined && (
         <div key={node.id}>
           {node.type === "recipe" ? (

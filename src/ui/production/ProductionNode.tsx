@@ -8,8 +8,8 @@ import { formatNumber, formatRate } from "./format.ts";
 export const inHandle = (item: string) => `in:${item}`;
 export const outHandle = (item: string) => `out:${item}`;
 
-const PORT_TOP = 44;
-const PORT_GAP = 26;
+export const PORT_TOP = 44;
+export const PORT_GAP = 26;
 
 /**
  * One production node, IDEF0-style: inputs on the left, outputs on the right. Shows the

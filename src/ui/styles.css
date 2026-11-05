@@ -705,6 +705,67 @@ button.icon {
   font-weight: 600;
 }
 
+.pnode-group {
+  border-left: 4px double var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+
+.pnode-head-row {
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.pnode-head-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.pnode-toggle {
+  flex: none;
+  min-height: 0;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+}
+
+/* Frame around an expanded sub-chain: only its header takes pointer events. */
+.react-flow__node.pframe-wrap {
+  pointer-events: none;
+}
+
+.pframe {
+  width: 100%;
+  height: 100%;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+
+.pframe.is-selected {
+  border: 2px solid var(--accent);
+}
+
+.pframe-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  pointer-events: all;
+  cursor: pointer;
+}
+
+.pframe-title {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .react-flow__edge.pedge-flow .react-flow__edge-path { stroke: var(--accent); stroke-width: 2; }
 .react-flow__edge.pedge-short .react-flow__edge-path { stroke: var(--danger); stroke-width: 2; }
 .react-flow__edge.pedge-invalid .react-flow__edge-path { stroke: var(--danger); stroke-dasharray: 4 4; }

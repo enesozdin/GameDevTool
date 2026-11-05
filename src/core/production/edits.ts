@@ -6,8 +6,9 @@ import type { Change, Patch } from "../history.ts";
 import type { Id } from "../model/primitives.ts";
 import type { Asset, Project } from "../model/project.ts";
 import { MAX_ASSETS } from "../model/project.ts";
-import { GRAPH_LIMITS, type GraphEdge, type GraphNode, type Position, type ProductionGraphAsset, type Scenario } from "../model/production-graph.ts";
+import { GRAPH_LIMITS, type GraphEdge, type GraphGroup, type GraphNode, type Position, type ProductionGraphAsset, type Scenario } from "../model/production-graph.ts";
 import type { Catalog } from "./catalog.ts";
+import { containerOf, descendantGroups, descendantNodes, groupStructure } from "./groups.ts";
 
 function graphAt(project: Project, graphId: Id): { graph: ProductionGraphAsset; index: number } | null {
   const index = project.assets.findIndex((a) => a.id === graphId);
@@ -101,20 +102,149 @@ export function setEdgeRatio(project: Project, graphId: Id, edgeId: Id, ratio: n
   return { label: "edit-connection", coalesceKey: `edit-connection:${edgeId}`, patches: [{ op: "set", path: ["assets", at.index, "edges", i, "ratio"], value: ratio }] };
 }
 
-/** Removes nodes (with their connections) and connections, as one step. */
-export function removeGraphElements(project: Project, graphId: Id, nodeIds: ReadonlySet<Id>, edgeIds: ReadonlySet<Id>): Change | null {
+/**
+ * Removes nodes (with their connections), connections and groups (with everything inside
+ * them), as one step. Groups left without any node are removed too.
+ */
+export function removeGraphElements(project: Project, graphId: Id, nodeIds: ReadonlySet<Id>, edgeIds: ReadonlySet<Id>, groupIds: ReadonlySet<Id> = new Set()): Change | null {
   const at = graphAt(project, graphId);
   if (at === null) return null;
+  const graph = at.graph;
+  let removeNodes = nodeIds;
+  if (groupIds.size > 0) {
+    const structure = groupStructure(graph);
+    const all = new Set(nodeIds);
+    for (const g of groupIds) if (structure.groups.has(g)) for (const n of descendantNodes(structure, g)) all.add(n);
+    removeNodes = all;
+  }
   const patches: Patch[] = [];
   // Highest index first, so earlier indices stay valid.
-  for (let i = at.graph.edges.length - 1; i >= 0; i--) {
-    const e = at.graph.edges[i]!;
-    if (edgeIds.has(e.id) || nodeIds.has(e.source) || nodeIds.has(e.target)) patches.push({ op: "remove", path: ["assets", at.index, "edges"], index: i });
+  for (let i = graph.edges.length - 1; i >= 0; i--) {
+    const e = graph.edges[i]!;
+    if (edgeIds.has(e.id) || removeNodes.has(e.source) || removeNodes.has(e.target)) patches.push({ op: "remove", path: ["assets", at.index, "edges"], index: i });
   }
-  for (let i = at.graph.nodes.length - 1; i >= 0; i--) {
-    if (nodeIds.has(at.graph.nodes[i]!.id)) patches.push({ op: "remove", path: ["assets", at.index, "nodes"], index: i });
+  for (let i = graph.nodes.length - 1; i >= 0; i--) {
+    if (removeNodes.has(graph.nodes[i]!.id)) patches.push({ op: "remove", path: ["assets", at.index, "nodes"], index: i });
+  }
+  if (graph.groups !== undefined && (removeNodes.size > 0 || groupIds.size > 0)) {
+    // Keep the groups that still contain a node, directly or through a child group.
+    const structure = groupStructure(graph);
+    const keep = new Set<Id>();
+    for (const node of graph.nodes) {
+      if (removeNodes.has(node.id)) continue;
+      for (let g = structure.nodeGroup.get(node.id); g !== undefined && !keep.has(g); g = structure.parent.get(g)) keep.add(g);
+    }
+    const kept = graph.groups.filter((g) => keep.has(g.id));
+    if (kept.length !== graph.groups.length) patches.push({ op: "set", path: ["assets", at.index, "groups"], value: kept.length === 0 ? undefined : kept });
   }
   return patches.length === 0 ? null : { label: "remove-graph-elements", patches };
+}
+
+// ---------------------------------------------------------------------------------------
+// Groups (sub-chains, see groups.ts)
+// ---------------------------------------------------------------------------------------
+
+/**
+ * The group that would contain a new group made of these nodes and groups: all of them
+ * must sit in the same group (or all at the top level). `null` when they do not, or when
+ * nothing usable is selected.
+ */
+export function commonContainer(graph: ProductionGraphAsset, nodeIds: Iterable<Id>, groupIds: Iterable<Id>): { container: Id | undefined } | null {
+  const structure = groupStructure(graph);
+  const nodes = new Set(graph.nodes.map((n) => n.id));
+  let first = true;
+  let container: Id | undefined;
+  const visit = (id: Id): boolean => {
+    const c = containerOf(structure, id);
+    if (first) {
+      first = false;
+      container = c;
+      return true;
+    }
+    return c === container;
+  };
+  for (const id of nodeIds) if (!nodes.has(id) || !visit(id)) return null;
+  for (const id of groupIds) if (!structure.groups.has(id) || !visit(id)) return null;
+  return first ? null : { container };
+}
+
+/** Puts nodes and groups that share one container into a new group, as one step. */
+export function groupElements(project: Project, graphId: Id, nodeIds: ReadonlySet<Id>, groupIds: ReadonlySet<Id>, group: { readonly id: Id; readonly label: string }): Change | null {
+  const at = graphAt(project, graphId);
+  if (at === null) return null;
+  const graph = at.graph;
+  const groups = graph.groups ?? [];
+  if (groups.length >= GRAPH_LIMITS.groups || groups.some((g) => g.id === group.id)) return null;
+  const common = commonContainer(graph, nodeIds, groupIds);
+  if (common === null) return null;
+  const structure = groupStructure(graph);
+  if (common.container !== undefined && structure.depth.get(common.container)! + 1 >= GRAPH_LIMITS.groupDepth) return null;
+  // The moved groups go one level deeper; their deepest descendant must stay in the limit.
+  for (const g of groupIds) {
+    const base = structure.depth.get(g)!;
+    for (const d of descendantGroups(structure, g)) if (structure.depth.get(d)! - base + (common.container === undefined ? 1 : structure.depth.get(common.container)! + 2) >= GRAPH_LIMITS.groupDepth) return null;
+  }
+
+  const base = ["assets", at.index] as const;
+  const created: GraphGroup = common.container === undefined ? { id: group.id, label: group.label } : { id: group.id, label: group.label, parent: common.container };
+  const patches: Patch[] = [];
+  if (graph.groups === undefined) patches.push({ op: "set", path: [...base, "groups"], value: [created] });
+  else {
+    graph.groups.forEach((g, i) => {
+      if (groupIds.has(g.id)) patches.push({ op: "set", path: [...base, "groups", i, "parent"], value: group.id });
+    });
+    patches.push({ op: "insert", path: [...base, "groups"], index: graph.groups.length, value: created });
+  }
+  graph.nodes.forEach((n, i) => {
+    if (nodeIds.has(n.id)) patches.push({ op: "set", path: [...base, "nodes", i, "group"], value: group.id });
+  });
+  return { label: "group", patches };
+}
+
+/** Dissolves a group: its members and child groups move to the enclosing group. */
+export function ungroup(project: Project, graphId: Id, groupId: Id): Change | null {
+  const at = graphAt(project, graphId);
+  if (at === null || at.graph.groups === undefined) return null;
+  const graph = at.graph;
+  const groups = at.graph.groups;
+  const index = groups.findIndex((g) => g.id === groupId);
+  if (index < 0) return null;
+  const structure = groupStructure(graph);
+  const up = structure.parent.get(groupId);
+  const base = ["assets", at.index] as const;
+  const patches: Patch[] = [];
+  graph.nodes.forEach((n, i) => {
+    if (n.group === groupId) patches.push({ op: "set", path: [...base, "nodes", i, "group"], value: up });
+  });
+  if (groups.length === 1) {
+    patches.push({ op: "set", path: [...base, "groups"], value: undefined });
+  } else {
+    groups.forEach((g, i) => {
+      if (g.parent === groupId) patches.push({ op: "set", path: [...base, "groups", i, "parent"], value: up });
+    });
+    patches.push({ op: "remove", path: [...base, "groups"], index });
+  }
+  return { label: "ungroup", patches };
+}
+
+/** Renames a group or collapses / expands it. `collapsed: false` is stored as no field. */
+export function updateGroup(project: Project, graphId: Id, groupId: Id, fields: { readonly label?: string; readonly collapsed?: boolean }): Change | null {
+  const at = graphAt(project, graphId);
+  if (at === null || at.graph.groups === undefined) return null;
+  const i = at.graph.groups.findIndex((g) => g.id === groupId);
+  if (i < 0) return null;
+  const group = at.graph.groups[i]!;
+  const path = ["assets", at.index, "groups", i] as const;
+  const patches: Patch[] = [];
+  if (fields.label !== undefined && fields.label !== group.label && fields.label.length >= 1 && fields.label.length <= 200) {
+    patches.push({ op: "set", path: [...path, "label"], value: fields.label });
+  }
+  if (fields.collapsed !== undefined && fields.collapsed !== (group.collapsed === true)) {
+    patches.push({ op: "set", path: [...path, "collapsed"], value: fields.collapsed ? true : undefined });
+  }
+  if (patches.length === 0) return null;
+  if (fields.label !== undefined && fields.collapsed === undefined) return { label: "rename-group", coalesceKey: `rename-group:${groupId}`, patches };
+  return { label: fields.collapsed === true ? "collapse-group" : fields.collapsed === false ? "expand-group" : "edit-group", patches };
 }
 
 // ---------------------------------------------------------------------------------------

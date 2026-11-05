@@ -38,6 +38,14 @@ The Production Chain Editor stores its data in ordinary assets:
   its type removes values that no longer fit. Engine exports ignore it. Adding the field was
   backward compatible (schema version 1).
 
+- **`groups`** (optional, on `production-graph` assets): sub-chains,
+  `[{ "id": "<ULID>", "label": "Smelting", "parent": "<group id>", "collapsed": true }]`.
+  A node joins a group with its optional `group` field. Groups nest through `parent` (at
+  most 16 levels) and only change how the chain is drawn: the calculation and engine
+  exports use the flat node list. The field is left out when a chain has no groups, and an
+  expanded group stores no `collapsed` field. Adding it was backward compatible (schema
+  version 1).
+
 Adding these kinds was backward compatible: schema version 1 files stay valid.
 
 Tables export to engine-neutral CSV; see [CSV.md](CSV.md).

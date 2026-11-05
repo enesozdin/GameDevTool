@@ -14,13 +14,22 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useCallback, useLayoutEffect, useMemo, useState, type DragEvent } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
 import {
   addEdge,
   addNode,
   autoLayout,
   canConnect,
+  commonContainer,
   compileCatalog,
+  descendantNodes,
+  groupElements,
+  groupGeometry,
+  groupStructure,
+  shownEdges,
+  summarizeCollapsed,
+  ungroup,
+  updateGroup,
   ConditionCompiler,
   evaluateGates,
   scenarioValues,
@@ -36,6 +45,7 @@ import {
   updateNode,
   type Change,
   type GraphNode,
+  type GroupStructure,
   type Id,
   type IdGenerator,
   type Position,
@@ -51,6 +61,7 @@ import { ProductionContext, type ProductionView } from "./context.ts";
 import { formatRate } from "./format.ts";
 import { Inspector } from "./Inspector.tsx";
 import { DRAG_MIME, Library, type LibraryDrop } from "./Library.tsx";
+import { GroupFrame, GroupNode } from "./GroupNode.tsx";
 import { inHandle, outHandle, ProductionNode } from "./ProductionNode.tsx";
 import { Report } from "./Report.tsx";
 import { Scenario } from "./Scenario.tsx";
@@ -65,7 +76,11 @@ export interface ProductionEditorProps {
   readonly simulation: SimulationService;
 }
 
-const nodeTypes = { production: ProductionNode };
+const nodeTypes = { production: ProductionNode, pgroup: GroupNode, pframe: GroupFrame };
+/** Size used for frames before React Flow has measured a node. */
+const DEFAULT_SIZE = { width: 260, height: 140 } as const;
+/** Frames stay below nodes, even when selected (React Flow adds 1000 to selected nodes). */
+const FRAME_Z = -2000;
 const HANDLE_PREFIX = 4; // "in:" / "out:" → item id after the prefix
 const itemOfHandle = (handle: string | null | undefined): string | null => {
   if (typeof handle !== "string") return null;
@@ -108,21 +123,36 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
   const locked = allOpen || gates.lockedCount === 0 ? undefined : gates.locked;
   const result = useMemo(() => solveNetwork(network, mode, { locked }), [network, mode, locked]);
   const nodesById = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph.nodes]);
+  const structure = useMemo(() => groupStructure(graph), [graph.groups, graph.nodes]);
+  const collapsed = useMemo(() => summarizeCollapsed(graph, structure, network, result, locked), [graph, structure, network, result, locked]);
+
+  // Latest values for callbacks that must stay stable (node components, React Flow handlers).
+  const latest = useRef({ project, graph, structure, commit });
+  latest.current = { project, graph, structure, commit };
+  const toggleGroup = useCallback((groupId: Id) => {
+    const { project: p, graph: g, structure: st, commit: c } = latest.current;
+    c(updateGroup(p, g.id, groupId, { collapsed: st.groups.get(groupId)?.collapsed !== true }));
+  }, []);
 
   const view: ProductionView = useMemo(
-    () => ({ strings, catalog, network, result, unit, nodes: nodesById, bottlenecks: new Set(result.bottlenecks), gates: allOpen ? null : gates }),
-    [strings, catalog, network, result, unit, nodesById, allOpen, gates],
+    () => ({ strings, catalog, network, result, unit, nodes: nodesById, bottlenecks: new Set(result.bottlenecks), gates: allOpen ? null : gates, groups: structure, collapsed, toggleGroup }),
+    [strings, catalog, network, result, unit, nodesById, allOpen, gates, structure, collapsed, toggleGroup],
   );
 
   // ---- Nodes: local React Flow state (drag positions, measured sizes, selection),
   // rebuilt from the graph whenever the graph changes.
-  const [rfNodes, setRfNodes] = useState<Node[]>(() => toRfNodes(graph.nodes, []));
-  useLayoutEffect(() => setRfNodes((prev) => toRfNodes(graph.nodes, prev)), [graph.nodes]);
+  const [rfNodes, setRfNodes] = useState<Node[]>(() => toRfNodes(graph, structure, []));
+  useLayoutEffect(() => setRfNodes((prev) => toRfNodes(graph, structure, prev)), [graph, structure]);
   const [selectedEdges, setSelectedEdges] = useState<ReadonlySet<Id>>(new Set());
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     // Removal goes through onDelete (one undo step for nodes + edges).
-    setRfNodes((nodes) => applyNodeChanges(changes.filter((c) => c.type !== "remove"), nodes));
+    setRfNodes((nodes) => {
+      const next = applyNodeChanges(changes.filter((c) => c.type !== "remove"), nodes);
+      // Frames depend on measured node sizes.
+      const { graph: g, structure: st } = latest.current;
+      return st.groups.size > 0 && changes.some((c) => c.type === "dimensions") ? refreshFrames(next, g, st) : next;
+    });
   }, []);
 
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
@@ -140,15 +170,31 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
 
   const onNodeDragStop = useCallback(
     (_: unknown, _node: Node, dragged: Node[]) => {
-      const positions = new Map<Id, Position>(dragged.map((n) => [n.id, n.position]));
+      const positions = new Map<Id, Position>();
+      for (const n of dragged) {
+        if (n.type === "production") positions.set(n.id, n.position);
+        else if (n.type === "pgroup") {
+          // A collapsed group moves all of its nodes by the same offset.
+          const origin = (n.data as { origin: Position }).origin;
+          const dx = n.position.x - origin.x;
+          const dy = n.position.y - origin.y;
+          for (const id of descendantNodes(structure, n.id)) {
+            const p = nodesById.get(id)?.position;
+            if (p !== undefined) positions.set(id, { x: p.x + dx, y: p.y + dy });
+          }
+        }
+      }
       commit(moveNodes(project, graph.id, positions));
     },
-    [commit, project, graph.id],
+    [commit, project, graph.id, structure, nodesById],
   );
 
   const deleteSelection = useCallback(
-    (nodeIds: Iterable<Id>, edgeIds: Iterable<Id>) => {
-      commit(removeGraphElements(project, graph.id, new Set(nodeIds), new Set(edgeIds)));
+    (rfNodeList: readonly Node[], edgeIds: Iterable<Id>) => {
+      const nodeIds = new Set<Id>();
+      const groupIds = new Set<Id>();
+      for (const n of rfNodeList) (n.type === "production" ? nodeIds : groupIds).add(n.id);
+      commit(removeGraphElements(project, graph.id, nodeIds, new Set(edgeIds), groupIds));
       setSelectedEdges(new Set());
     },
     [commit, project, graph.id],
@@ -171,27 +217,27 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
     [commit, project, graph, catalog, newId],
   );
 
-  // ---- Edges: derived from the graph and the solution on every render.
+  // ---- Edges: derived from the graph and the solution. Connections at a collapsed group
+  // are merged per item and cannot be selected (expand the group to edit them).
   const rfEdges: Edge[] = useMemo(
     () =>
-      graph.edges.map((e, i) => {
-        const valid = network.edgeInPort[i]! >= 0;
-        const f = result.edgeFlow[i]!;
-        const inPort = network.edgeInPort[i]!;
-        const short = valid && result.inRequired[inPort]! - result.inSupplied[inPort]! > RATE_EPSILON;
+      shownEdges(graph, structure, network, result).map((e) => {
+        const single = e.edge >= 0;
         return {
           id: e.id,
           source: e.source,
           target: e.target,
           sourceHandle: outHandle(e.item),
           targetHandle: inHandle(e.item),
-          label: valid ? formatRate(f, unit, s.perUnit) : "!",
-          selected: selectedEdges.has(e.id),
-          className: !valid ? "pedge-invalid" : short ? "pedge-short" : f > RATE_EPSILON ? "pedge-flow" : "pedge-idle",
+          label: e.valid ? formatRate(e.flow, unit, s.perUnit) : "!",
+          selectable: single,
+          deletable: single,
+          selected: single && selectedEdges.has(e.id),
+          className: !e.valid ? "pedge-invalid" : e.short ? "pedge-short" : e.flow > RATE_EPSILON ? "pedge-flow" : "pedge-idle",
           markerEnd: { type: MarkerType.ArrowClosed },
         };
       }),
-    [graph.edges, network, result, unit, s, selectedEdges],
+    [graph, structure, network, result, unit, s, selectedEdges],
   );
 
   // ---- Adding nodes from the library (click: centre of the view; drop: cursor).
@@ -223,8 +269,32 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
   };
 
   const selectedNodes = rfNodes.filter((n) => n.selected);
-  const selectedNode = selectedNodes.length === 1 ? nodesById.get(selectedNodes[0]!.id) : undefined;
+  const selectedNode = selectedNodes.length === 1 && selectedNodes[0]!.type === "production" ? nodesById.get(selectedNodes[0]!.id) : undefined;
+  const selectedGroup = selectedNodes.length === 1 && selectedNodes[0]!.type !== "production" ? structure.groups.get(selectedNodes[0]!.id) : undefined;
   const selectedEdge = selectedEdges.size === 1 ? graph.edges.find((e) => selectedEdges.has(e.id)) : undefined;
+  const selectionIds = () => {
+    const nodeIds = new Set<Id>();
+    const groupIds = new Set<Id>();
+    for (const n of selectedNodes) (n.type === "production" ? nodeIds : groupIds).add(n.id);
+    return { nodeIds, groupIds };
+  };
+  const canGroup = selectedNodes.length > 0 && (() => {
+    const { nodeIds, groupIds } = selectionIds();
+    return commonContainer(graph, nodeIds, groupIds) !== null;
+  })();
+  const groupSelection = () => {
+    const { nodeIds, groupIds } = selectionIds();
+    commit(groupElements(project, graph.id, nodeIds, groupIds, { id: newId(), label: s.groupDefault((graph.groups?.length ?? 0) + 1) }));
+  };
+  const ungroupSelection = () => {
+    if (selectedGroup !== undefined) commit(ungroup(project, graph.id, selectedGroup.id));
+  };
+  const onCanvasKeyDown = (e: KeyboardEvent) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.key.toLowerCase() !== "g") return;
+    e.preventDefault();
+    if (e.shiftKey) ungroupSelection();
+    else if (canGroup) groupSelection();
+  };
 
   if (catalog.itemsTable === undefined || catalog.recipesTable === undefined) {
     return <p className="field-error">{s.noTables}</p>;
@@ -248,12 +318,18 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
           <button type="button" onClick={() => void flow.fitView({ duration: 200 })}>
             {s.fitView}
           </button>
+          <button type="button" disabled={!canGroup} title={selectedNodes.length > 0 && !canGroup ? s.groupMixedHint : s.groupHint} onClick={groupSelection}>
+            {s.group}
+          </button>
+          <button type="button" disabled={selectedGroup === undefined} title={s.ungroupHint} onClick={ungroupSelection}>
+            {s.ungroup}
+          </button>
         </div>
         <div className="pbody">
           <aside className="pside">
             <Library strings={strings} catalog={catalog} onAdd={(d) => addFromLibrary(d)} />
           </aside>
-          <div className="pcanvas" aria-label={s.canvasLabel} onDragOver={(e) => e.dataTransfer.types.includes(DRAG_MIME) && e.preventDefault()} onDrop={onDrop}>
+          <div className="pcanvas" aria-label={s.canvasLabel} onDragOver={(e) => e.dataTransfer.types.includes(DRAG_MIME) && e.preventDefault()} onDrop={onDrop} onKeyDown={onCanvasKeyDown}>
             <ReactFlow
               nodes={rfNodes}
               edges={rfEdges}
@@ -263,7 +339,8 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
               onNodeDragStop={onNodeDragStop}
               onConnect={onConnect}
               isValidConnection={isValidConnection}
-              onDelete={({ nodes, edges }) => deleteSelection(nodes.map((n) => n.id), edges.map((e) => e.id))}
+              onDelete={({ nodes, edges }) => deleteSelection(nodes, edges.map((e) => e.id))}
+              onNodeDoubleClick={(_, n) => n.type !== "production" && toggleGroup(n.id)}
               onlyRenderVisibleElements
               fitView
               minZoom={0.1}
@@ -281,11 +358,15 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
               conditions={conditions}
               unit={unit}
               node={selectedNode}
+              group={selectedGroup}
+              groupNodeCount={selectedGroup === undefined ? 0 : descendantNodes(structure, selectedGroup.id).length}
               edge={selectedEdge}
               selectionSize={selectedNodes.length + selectedEdges.size}
               onNodeChange={(id, fields) => commit(updateNode(project, graph.id, id, fields))}
               onEdgeRatio={(id, ratio) => commit(setEdgeRatio(project, graph.id, id, ratio))}
-              onDelete={() => deleteSelection(selectedNodes.map((n) => n.id), selectedEdges)}
+              onGroupChange={(id, fields) => commit(updateGroup(project, graph.id, id, fields))}
+              onUngroup={ungroupSelection}
+              onDelete={() => deleteSelection(selectedNodes, selectedEdges)}
             />
             <Scenario
               strings={strings}
@@ -307,14 +388,65 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
   );
 }
 
-/** Graph nodes → React Flow nodes, keeping measured size and selection of existing ones. */
-function toRfNodes(nodes: readonly GraphNode[], prev: readonly Node[]): Node[] {
+/**
+ * What the canvas draws → React Flow nodes: frames of expanded groups (behind), collapsed
+ * groups, and the nodes not hidden in a collapsed group. Keeps measured size and selection.
+ */
+function toRfNodes(graph: ProductionGraphAsset, structure: GroupStructure, prev: readonly Node[]): Node[] {
   const byId = new Map(prev.map((n) => [n.id, n]));
-  return nodes.map((gn) => {
-    const p = byId.get(gn.id);
-    const rf: Node = { id: gn.id, type: "production", position: gn.position, data: {} };
-    if (p?.selected) rf.selected = true;
-    if (p?.measured) rf.measured = p.measured;
+  const keep = (rf: Node): Node => {
+    const p = byId.get(rf.id);
+    if (p?.selected && p.type === rf.type) rf.selected = true;
+    if (p?.measured && p.type === rf.type) rf.measured = p.measured;
     return rf;
+  };
+  const out: Node[] = [];
+  if (structure.groups.size > 0) {
+    const geometry = groupGeometry(graph, structure, sizeFrom(byId));
+    const frames = [...geometry.frames].sort((a, b) => structure.depth.get(a[0])! - structure.depth.get(b[0])!);
+    for (const [id, r] of frames) out.push(keep(frameNode(id, r, structure)));
+    for (const [id, at] of geometry.collapsedAt) out.push(keep({ id, type: "pgroup", position: at, data: { origin: at } }));
+  }
+  for (const gn of graph.nodes) {
+    if (structure.shownAs.get(gn.id) !== gn.id) continue;
+    out.push(keep({ id: gn.id, type: "production", position: gn.position, data: {} }));
+  }
+  return out;
+}
+
+function sizeFrom(byId: ReadonlyMap<string, Node>): (id: Id) => { width: number; height: number } {
+  return (id) => {
+    const m = byId.get(id)?.measured;
+    return m?.width !== undefined && m.height !== undefined ? { width: m.width, height: m.height } : DEFAULT_SIZE;
+  };
+}
+
+function frameNode(id: Id, r: { x: number; y: number; width: number; height: number }, structure: GroupStructure): Node {
+  return {
+    id,
+    type: "pframe",
+    position: { x: r.x, y: r.y },
+    width: r.width,
+    height: r.height,
+    data: {},
+    draggable: false,
+    connectable: false,
+    className: "pframe-wrap",
+    zIndex: FRAME_Z + structure.depth.get(id)!,
+  };
+}
+
+/** Frames recomputed from measured sizes; unchanged frames keep their objects. */
+function refreshFrames(nodes: Node[], graph: ProductionGraphAsset, structure: GroupStructure): Node[] {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const { frames } = groupGeometry(graph, structure, sizeFrom(byId));
+  let changed = false;
+  const next = nodes.map((n) => {
+    if (n.type !== "pframe") return n;
+    const r = frames.get(n.id);
+    if (r === undefined || (r.x === n.position.x && r.y === n.position.y && r.width === n.width && r.height === n.height)) return n;
+    changed = true;
+    return { ...n, position: { x: r.x, y: r.y }, width: r.width, height: r.height };
   });
+  return changed ? next : nodes;
 }

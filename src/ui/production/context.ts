@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { Catalog, GateState, GraphNode, Id, Network, SolveResult } from "../../core/index.ts";
+import type { Catalog, CollapsedSummary, GateState, GraphNode, GroupStructure, Id, Network, SolveResult } from "../../core/index.ts";
 import type { UiStrings } from "../strings.ts";
 import type { RateUnit } from "./format.ts";
 
@@ -17,6 +17,11 @@ export interface ProductionView {
   readonly bottlenecks: ReadonlySet<number>;
   /** Gate evaluation for the current scenario; null when all gates are treated as open. */
   readonly gates: GateState | null;
+  readonly groups: GroupStructure;
+  /** Ports and status of each drawn collapsed group. */
+  readonly collapsed: ReadonlyMap<Id, CollapsedSummary>;
+  /** Collapses or expands a group. Stable across renders. */
+  readonly toggleGroup: (groupId: Id) => void;
 }
 
 export const ProductionContext = createContext<ProductionView | null>(null);

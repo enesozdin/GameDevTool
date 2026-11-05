@@ -696,6 +696,35 @@
                 "maxItems": 50000,
                 "type": "array"
               },
+              "groups": {
+                "items": {
+                  "properties": {
+                    "collapsed": {
+                      "type": "boolean"
+                    },
+                    "id": {
+                      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+                      "type": "string"
+                    },
+                    "label": {
+                      "maxLength": 200,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "parent": {
+                      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 5000,
+                "type": "array"
+              },
               "id": {
                 "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
                 "type": "string"
@@ -723,6 +752,10 @@
                             "fixed",
                             "poisson"
                           ],
+                          "type": "string"
+                        },
+                        "group": {
+                          "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
                           "type": "string"
                         },
                         "id": {
@@ -778,6 +811,10 @@
                     },
                     {
                       "properties": {
+                        "group": {
+                          "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+                          "type": "string"
+                        },
                         "id": {
                           "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
                           "type": "string"
@@ -835,6 +872,10 @@
                           "minimum": 0,
                           "type": "number"
                         },
+                        "group": {
+                          "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+                          "type": "string"
+                        },
                         "id": {
                           "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
                           "type": "string"
@@ -882,6 +923,10 @@
                     },
                     {
                       "properties": {
+                        "group": {
+                          "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+                          "type": "string"
+                        },
                         "id": {
                           "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
                           "type": "string"
@@ -934,6 +979,10 @@
                     },
                     {
                       "properties": {
+                        "group": {
+                          "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+                          "type": "string"
+                        },
                         "id": {
                           "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
                           "type": "string"
@@ -981,6 +1030,10 @@
                     },
                     {
                       "properties": {
+                        "group": {
+                          "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+                          "type": "string"
+                        },
                         "id": {
                           "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
                           "type": "string"
@@ -1030,6 +1083,10 @@
                       "properties": {
                         "condition": {
                           "maxLength": 10000,
+                          "type": "string"
+                        },
+                        "group": {
+                          "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
                           "type": "string"
                         },
                         "id": {

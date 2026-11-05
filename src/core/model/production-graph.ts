@@ -20,6 +20,9 @@ export const GRAPH_LIMITS = {
   /** Items per second. */
   rate: 1e9,
   machines: 1e9,
+  groups: 5_000,
+  /** Nesting levels of groups inside groups. */
+  groupDepth: 16,
 } as const;
 
 const coordinate = z.number().check(z.gte(-GRAPH_LIMITS.coordinate), z.lte(GRAPH_LIMITS.coordinate));
@@ -33,6 +36,8 @@ const nodeBase = {
   position: PositionSchema,
   /** Optional display label; the item or recipe name is shown otherwise. */
   label: z.optional(NameSchema),
+  /** Group (sub-chain) the node belongs to; none = top level. */
+  group: z.optional(IdSchema),
 };
 
 export const GraphNodeSchema = z.discriminatedUnion("type", [
@@ -97,6 +102,21 @@ export const ScenarioSchema = z.object({
 });
 export type Scenario = z.infer<typeof ScenarioSchema>;
 
+/**
+ * A sub-chain (IDEF0 hierarchical decomposition). Groups only organize the canvas: the
+ * calculation always runs on the flat node list. A collapsed group is drawn as one node
+ * whose ports are the connections crossing its boundary. Groups nest through `parent`.
+ */
+export const GraphGroupSchema = z.object({
+  id: IdSchema,
+  label: NameSchema,
+  /** Enclosing group; none = top level. */
+  parent: z.optional(IdSchema),
+  /** Drawn as one node. Default false (expanded: a frame around its members). */
+  collapsed: z.optional(z.boolean()),
+});
+export type GraphGroup = z.infer<typeof GraphGroupSchema>;
+
 export const ProductionGraphAssetSchema = z.object({
   id: IdSchema,
   kind: z.literal("production-graph"),
@@ -108,6 +128,8 @@ export const ProductionGraphAssetSchema = z.object({
   recipes: IdSchema,
   nodes: z.array(GraphNodeSchema).check(z.maxLength(GRAPH_LIMITS.nodes)),
   edges: z.array(GraphEdgeSchema).check(z.maxLength(GRAPH_LIMITS.edges)),
+  /** Sub-chains; stored only when the chain has any. */
+  groups: z.optional(z.array(GraphGroupSchema).check(z.maxLength(GRAPH_LIMITS.groups))),
   scenario: z.optional(ScenarioSchema),
 });
 export type ProductionGraphAsset = z.infer<typeof ProductionGraphAssetSchema>;

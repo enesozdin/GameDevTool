@@ -7,13 +7,14 @@
 import type { Issue, IssuePath } from "../result.ts";
 import type { Id } from "../model/primitives.ts";
 import type { Asset, Project } from "../model/project.ts";
-import type { ProductionGraphAsset } from "../model/production-graph.ts";
+import { GRAPH_LIMITS, type ProductionGraphAsset } from "../model/production-graph.ts";
 import { compileCatalog } from "./catalog.ts";
 import { compileNetwork, NodeKind } from "./network.ts";
 import { adjacency, stronglyConnected } from "./scc.ts";
 import { ConditionCompiler, exprIssue } from "../expr/conditions.ts";
 import { checkUnlockOrder } from "./unlocks.ts";
 import { fitsVariable } from "./gates.ts";
+import { groupStructure } from "./groups.ts";
 
 export function validateProductionGraph(
   project: Project,
@@ -148,6 +149,7 @@ export function validateProductionGraph(
   }
 
   checkUnlockOrder(graph, catalog, net, conditions, base, issues);
+  if (graph.groups !== undefined || graph.nodes.some((node) => node.group !== undefined)) checkGroups(graph, base, issues);
 
   // Saved scenario values: the solver ignores the ones that do not fit.
   if (graph.scenario !== undefined) {
@@ -159,6 +161,40 @@ export function validateProductionGraph(
       else if (!fitsVariable(variable, value)) issues.push({ severity: "warning", code: "scenario-type-mismatch", path, params: { name: variable.name } });
     }
   }
+}
+
+/** Broken group structure; groupStructure() treats the affected parts as top level. */
+function checkGroups(graph: ProductionGraphAsset, base: IssuePath, issues: Issue[]): void {
+  const structure = groupStructure(graph);
+  const nonEmpty = new Set<string>();
+  for (const start of structure.nodeGroup.values()) {
+    for (let g: string | undefined = start; g !== undefined && !nonEmpty.has(g); g = structure.parent.get(g)) nonEmpty.add(g);
+  }
+  graph.nodes.forEach((node, i) => {
+    if (node.group !== undefined && !structure.groups.has(node.group)) issues.push({ severity: "error", code: "group-missing", path: [...base, "nodes", i, "group"] });
+  });
+  (graph.groups ?? []).forEach((group, i) => {
+    const path: IssuePath = [...base, "groups", i];
+    if (group.parent !== undefined && structure.parent.get(group.id) !== group.parent) {
+      if (!structure.groups.has(group.parent)) issues.push({ severity: "error", code: "group-missing", path: [...path, "parent"] });
+      else if (onLoop(graph, group.id)) issues.push({ severity: "error", code: "group-cycle", path: [...path, "parent"] });
+      else issues.push({ severity: "error", code: "group-too-deep", path: [...path, "parent"], params: { limit: GRAPH_LIMITS.groupDepth } });
+    }
+    if (structure.groups.get(group.id) === group && !nonEmpty.has(group.id)) {
+      issues.push({ severity: "warning", code: "group-empty", path });
+    }
+  });
+}
+
+/** Whether following `parent` links from `id` comes back to it. */
+function onLoop(graph: ProductionGraphAsset, id: string): boolean {
+  const parents = new Map((graph.groups ?? []).map((g) => [g.id, g.parent]));
+  let at = parents.get(id);
+  for (let steps = 0; at !== undefined && steps <= parents.size; steps++) {
+    if (at === id) return true;
+    at = parents.get(at);
+  }
+  return false;
 }
 
 function hasPort(items: readonly Id[], start: Int32Array, node: number, item: Id): boolean {
