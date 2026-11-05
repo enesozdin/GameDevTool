@@ -18,6 +18,11 @@ import {
   solveNetwork,
   createSolveWorkspace,
   solveSupplyInto,
+  timeToFirstUnit,
+  cycleSeconds,
+  inputItem,
+  type RecipeChoice,
+  type FirstUnit,
   startMonteCarlo,
   stepMonteCarlo,
   validateProject,
@@ -180,6 +185,65 @@ describe("solver edge cases", () => {
     const state = startMonteCarlo(net, options);
     while (!stepMonteCarlo(net, state, options, 7));
     assert.equal(state.unconverged, 20);
+  });
+
+  it("time to first unit matches the recursive definition on random graphs, loops included", () => {
+    // Reference: the straightforward recursive version.
+    const reference = (choice: RecipeChoice, item: Id): FirstUnit => {
+      const memo = new Map<Id, FirstUnit>();
+      const visiting = new Set<Id>();
+      const visit = (id: Id): FirstUnit => {
+        const known = memo.get(id);
+        if (known !== undefined) return known;
+        const recipe = choice.get(id);
+        if (recipe === undefined || visiting.has(id)) return { seconds: 0, path: [id] };
+        visiting.add(id);
+        let slowest: FirstUnit = { seconds: 0, path: [] };
+        for (const input of recipe.inputs) {
+          const r = visit(inputItem(choice, input));
+          if (r.seconds > slowest.seconds || slowest.path.length === 0) slowest = r;
+        }
+        visiting.delete(id);
+        const result = { seconds: slowest.seconds + (cycleSeconds(recipe) ?? 0), path: [...slowest.path, id] };
+        memo.set(id, result);
+        return result;
+      };
+      return visit(item);
+    };
+    const random = createRandom(42);
+    for (let round = 0; round < 200; round++) {
+      const b = builder();
+      const count = 2 + Math.floor(random.next() * 8);
+      const items = Array.from({ length: count }, (_, i) => b.item(`I${i}`));
+      for (let i = 0; i < count; i++) {
+        if (random.next() < 0.25) continue; // raw item
+        const inputs: Stack[] = [];
+        const wanted = Math.floor(random.next() * 4);
+        for (let k = 0; k < wanted; k++) {
+          const from = items[Math.floor(random.next() * count)]!;
+          if (!inputs.some((s) => "item" in s && s.item === from)) inputs.push({ item: from, count: 1 });
+        }
+        b.recipe(`R${i}`, inputs, [{ item: items[i]!, count: 1 }], 1 + Math.floor(random.next() * 3));
+      }
+      const { catalog } = b.compile();
+      const choice = defaultRecipeChoice(catalog);
+      for (const item of items) assert.deepEqual(timeToFirstUnit(choice, item), reference(choice, item), `round ${round}`);
+    }
+  });
+
+  it("time to first unit survives a recipe chain far deeper than the call stack", () => {
+    const b = builder();
+    const depth = 50_000;
+    let previous = b.item("I0");
+    for (let i = 1; i <= depth; i++) {
+      const next = b.item(`I${i}`);
+      b.recipe(`R${i}`, [{ item: previous, count: 1 }], [{ item: next, count: 1 }], 1);
+      previous = next;
+    }
+    const { catalog } = b.compile();
+    const first = timeToFirstUnit(defaultRecipeChoice(catalog), previous);
+    assert.equal(first.seconds, depth);
+    assert.equal(first.path.length, depth + 1);
   });
 
   it("samples each stack of a merged output port with its own chance", () => {

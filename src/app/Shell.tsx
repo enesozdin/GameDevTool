@@ -155,17 +155,20 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
   // ---- Actions ------------------------------------------------------------------------
   const actions = {
     newProject() {
-      if (!confirmDiscard()) return;
+      // A folder save in flight would bind its folder to the new project when it ends.
+      if (busy.current || !confirmDiscard()) return;
       folder.current = null;
       dispatch({ type: "replace", project: createEmptyProject(strings.untitledProject, newId), target: null, saved: true });
       setSelectedId(null);
       setNotice(null);
     },
     async open() {
-      if (!confirmDiscard()) return;
+      if (busy.current || !confirmDiscard()) return;
       const file = await pickProjectFile();
       if (file === null) return;
       const result = await readProjectFile(file);
+      // A save may have started while the file was read; it must finish on its own project.
+      if (busy.current) return;
       if (!result.ok) {
         setNotice({ kind: "error", text: strings.openFailed(strings.loadErrors[result.error.code] ?? result.error.code) });
         return;
@@ -337,7 +340,7 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
   }, []);
 
   const restoreRecovery = (entry: RecoveryEntry) => {
-    if (!confirmDiscard()) return;
+    if (busy.current || !confirmDiscard()) return;
     setRecovery(null);
     const loaded = loadProject(entry.text);
     if (!loaded.ok) {
@@ -378,10 +381,10 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
       <header className="shell-header">
         <h1 className="shell-title">{strings.appName}</h1>
         <div className="toolbar" role="group" aria-label={t.label}>
-          <button type="button" onClick={actions.newProject}>
+          <button type="button" onClick={actions.newProject} disabled={saving}>
             {t.new}
           </button>
-          <button type="button" onClick={() => void actions.open()} title={t.withShortcut(t.open, `${MOD}O`)}>
+          <button type="button" onClick={() => void actions.open()} title={t.withShortcut(t.open, `${MOD}O`)} disabled={saving}>
             {t.open}
           </button>
           {folderMode && (
@@ -433,7 +436,7 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
         <div className="banner" role="region" aria-label={strings.recovery.restore}>
           <p>{strings.recovery.found(recovery.projectName, formatTime(recovery.savedAt))}</p>
           <div className="actions">
-            <button type="button" className="primary" onClick={() => restoreRecovery(recovery)}>
+            <button type="button" className="primary" onClick={() => restoreRecovery(recovery)} disabled={saving}>
               {strings.recovery.restore}
             </button>
             <button type="button" onClick={() => discardRecovery(recovery)}>

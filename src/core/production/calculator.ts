@@ -262,25 +262,60 @@ export interface FirstUnit {
  * Time to first unit: the critical path through the recipe tree, where the inputs of a
  * recipe are made in parallel. Items in a loop count as already available (a catalyst is
  * needed to start the loop anyway).
+ *
+ * Iterative with an explicit stack and a linked path, so a recipe chain thousands of steps
+ * deep (a hand-edited or generated project) neither overflows the call stack nor copies
+ * the path at every step.
  */
 export function timeToFirstUnit(choice: RecipeChoice, item: Id): FirstUnit {
-  const memo = new Map<Id, FirstUnit>();
+  /** One finished item; `prev` is the slowest input's entry (the rest of the path). */
+  interface Entry {
+    readonly seconds: number;
+    readonly id: Id;
+    readonly prev: Entry | undefined;
+  }
+  interface Frame {
+    readonly id: Id;
+    readonly recipe: CatalogRecipe;
+    next: number;
+    slowest: Entry | undefined;
+  }
+  const memo = new Map<Id, Entry>();
   const visiting = new Set<Id>();
-  const visit = (id: Id): FirstUnit => {
+  const stack: Frame[] = [];
+
+  /** The entry of `id` if it is known right away; otherwise pushes a frame and returns undefined. */
+  const enter = (id: Id): Entry | undefined => {
     const known = memo.get(id);
     if (known !== undefined) return known;
     const recipe = choice.get(id);
-    if (recipe === undefined || visiting.has(id)) return { seconds: 0, path: [id] };
+    if (recipe === undefined || visiting.has(id)) return { seconds: 0, id, prev: undefined };
     visiting.add(id);
-    let slowest: FirstUnit = { seconds: 0, path: [] };
-    for (const input of recipe.inputs) {
-      const t = visit(inputItem(choice, input));
-      if (t.seconds > slowest.seconds || slowest.path.length === 0) slowest = t;
-    }
-    visiting.delete(id);
-    const result = { seconds: slowest.seconds + (cycleSeconds(recipe) ?? 0), path: [...slowest.path, id] };
-    memo.set(id, result);
-    return result;
+    stack.push({ id, recipe, next: 0, slowest: undefined });
+    return undefined;
   };
-  return visit(item);
+
+  let value = enter(item);
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1]!;
+    if (value !== undefined) {
+      // The first input always counts; a later one only if it is strictly slower.
+      if (frame.slowest === undefined || value.seconds > frame.slowest.seconds) frame.slowest = value;
+      value = undefined;
+    }
+    if (frame.next < frame.recipe.inputs.length) {
+      value = enter(inputItem(choice, frame.recipe.inputs[frame.next++]!));
+      continue;
+    }
+    stack.pop();
+    visiting.delete(frame.id);
+    const entry: Entry = { seconds: (frame.slowest?.seconds ?? 0) + (cycleSeconds(frame.recipe) ?? 0), id: frame.id, prev: frame.slowest };
+    memo.set(frame.id, entry);
+    value = entry;
+  }
+
+  const result = value!;
+  const path: Id[] = [];
+  for (let e: Entry | undefined = result; e !== undefined; e = e.prev) path.push(e.id);
+  return { seconds: result.seconds, path: path.reverse() };
 }
