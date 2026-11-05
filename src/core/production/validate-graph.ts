@@ -1,6 +1,7 @@
 /**
  * Production graph checks (ROADMAP §4.1 "Validation"): typed connections, unconnected
- * inputs, loops with no source, unreachable nodes, recipes without a usable cycle time.
+ * inputs, loops with no source, unreachable nodes, recipes without a usable cycle time,
+ * gate conditions and recipes unlocked before their inputs.
  * Missing rows and tables are reported by the reference index as broken references.
  */
 import type { Issue, IssuePath } from "../result.ts";
@@ -10,6 +11,8 @@ import type { ProductionGraphAsset } from "../model/production-graph.ts";
 import { compileCatalog } from "./catalog.ts";
 import { compileNetwork, NodeKind } from "./network.ts";
 import { adjacency, stronglyConnected } from "./scc.ts";
+import { ConditionCompiler, exprIssue } from "../expr/conditions.ts";
+import { checkUnlockOrder } from "./unlocks.ts";
 
 export function validateProductionGraph(
   project: Project,
@@ -17,6 +20,7 @@ export function validateProductionGraph(
   assetIndex: number,
   assets: ReadonlyMap<Id, Asset>,
   issues: Issue[],
+  conditions: ConditionCompiler = new ConditionCompiler(project.manifest.variables),
 ): void {
   const base: IssuePath = ["assets", assetIndex];
   const roleOf = (id: Id) => {
@@ -76,6 +80,13 @@ export function validateProductionGraph(
       if (recipe === undefined) return;
       if (recipe.time === undefined) issues.push({ severity: "error", code: "recipe-time-invalid", path: [...path, "recipe"] });
       if (recipe.outputs.length === 0) issues.push({ severity: "warning", code: "recipe-no-outputs", path: [...path, "recipe"] });
+    } else if (node.type === "gate") {
+      if (node.condition.trim() === "") {
+        issues.push({ severity: "warning", code: "gate-condition-empty", path: [...path, "condition"] });
+      } else {
+        const c = conditions.compile(node.condition);
+        if (!c.ok) issues.push(exprIssue([...path, "condition"], c.error));
+      }
     }
     for (let q = net.inStart[i]!; q < net.inStart[i + 1]!; q++) {
       if (net.inEdgeStart[q] === net.inEdgeStart[q + 1]) {
@@ -134,6 +145,8 @@ export function validateProductionGraph(
       issues.push({ severity: "warning", code: "unreachable", path: [...base, "nodes", u] });
     }
   }
+
+  checkUnlockOrder(graph, catalog, net, conditions, base, issues);
 }
 
 function hasPort(items: readonly Id[], start: Int32Array, node: number, item: Id): boolean {

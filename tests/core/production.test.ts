@@ -289,3 +289,67 @@ describe("layout", () => {
     for (const e of graph.edges) assert.ok(pos.get(e.source)!.x < pos.get(e.target)!.x);
   });
 });
+
+describe("gates and unlocks", () => {
+  function gated() {
+    const s = sample();
+    const newId = fixedIds(1_800_000_000_000);
+    s.project.manifest.variables.push(
+      { id: newId(), name: "Level", type: "int", default: 1 },
+      { id: newId(), name: "HasForge", type: "bool", default: false },
+    );
+    const gateCol = (s.recipes.role as { gate: Id }).gate;
+    const setGate = (name: string, condition: string) => {
+      s.recipes.rows.find((r) => r.name === name)!.cells[gateCol] = condition;
+    };
+    return { ...s, newId, gateCol, setGate };
+  }
+  const codes = (project: Project, code: string) => validateProject(project).filter((i) => i.code === code);
+
+  it("reports invalid recipe unlocks and gate conditions with their range", () => {
+    const { project, graph, gateCol, setGate, newId, items } = gated();
+    setGate("ForgeIronSword", "Level >= ");
+    const recipeIssues = codes(project, "expr-unexpected-token");
+    assert.equal(recipeIssues.length, 1);
+    assert.deepEqual(recipeIssues[0]!.path.slice(-2), ["cells", gateCol]);
+    assert.equal(recipeIssues[0]!.params?.start, 9);
+
+    graph.nodes.push({ id: newId(), type: "gate", position: { x: 0, y: 0 }, item: itemId(items, "IronBar"), condition: "Levle > 2" });
+    graph.nodes.push({ id: newId(), type: "gate", position: { x: 0, y: 0 }, item: itemId(items, "IronBar"), condition: " " });
+    const unknown = codes(project, "expr-unknown-name");
+    assert.equal(unknown.length, 1);
+    assert.deepEqual(unknown[0]!.params, { name: "Levle", start: 0, end: 5 });
+    assert.equal(codes(project, "gate-condition-empty").length, 1);
+  });
+
+  it("warns when a recipe can unlock before its inputs", () => {
+    const { project, graph, recipes, setGate, newId } = gated();
+    const forge = nodeOf(graph, (n) => n.type === "recipe" && n.recipe === recipeId(recipes, "ForgeIronSword"));
+    setGate("SmeltIronBar", "Level >= 5");
+    setGate("ForgeIronSword", "HasForge");
+    let issues = codes(project, "used-before-unlocked");
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0]!.path.at(-1), forge);
+    assert.equal(issues[0]!.params?.condition, "Level >= 5");
+
+    // A stricter condition implies the weaker one.
+    setGate("ForgeIronSword", "HasForge and level > 6");
+    assert.equal(codes(project, "used-before-unlocked").length, 0);
+
+    // Requirements propagate through gate nodes on the way.
+    const smelt = graph.nodes[nodeOf(graph, (n) => n.type === "recipe" && n.recipe === recipeId(recipes, "SmeltIronBar"))]!;
+    const edgeIndex = graph.edges.findIndex((e) => e.source === smelt.id && graph.nodes[forge]!.id === e.target);
+    const edge = graph.edges[edgeIndex]!;
+    const gateNode: GraphNode = { id: newId(), type: "gate", position: { x: 0, y: 0 }, item: edge.item, condition: "HasForge" };
+    graph.nodes.push(gateNode);
+    graph.edges.splice(edgeIndex, 1, { ...edge, target: gateNode.id }, { ...edge, id: newId(), source: gateNode.id });
+    setGate("ForgeIronSword", "Level > 6");
+    issues = codes(project, "used-before-unlocked");
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0]!.params?.condition, "HasForge");
+
+    // Ungated recipes are never reported.
+    setGate("ForgeIronSword", "");
+    assert.equal(codes(project, "used-before-unlocked").length, 0);
+  });
+});

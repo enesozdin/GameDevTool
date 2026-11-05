@@ -1,7 +1,8 @@
-import type { Asset, Id, Issue, Project, ReferenceIndex } from "../core/index.ts";
+import type { Asset, Change, Id, IdGenerator, Issue, Project, ReferenceIndex } from "../core/index.ts";
 import { isValidName } from "../core/index.ts";
 import { NameField } from "../ui/components/NameField.tsx";
 import type { UiStrings } from "../ui/strings.ts";
+import { VariablesPanel } from "../ui/variables/VariablesPanel.tsx";
 import type { SaveTarget } from "./state.ts";
 
 const MAX_LISTED_ISSUES = 100;
@@ -20,11 +21,13 @@ export interface ProjectPanelProps {
   readonly project: Project;
   readonly target: SaveTarget | null;
   readonly issues: readonly Issue[];
+  readonly newId: IdGenerator;
+  readonly commit: (change: Change | null) => void;
   readonly onRename: (name: string) => void;
   readonly onSelectAsset: (id: Id) => void;
 }
 
-export function ProjectPanel({ strings, project, target, issues, onRename, onSelectAsset }: ProjectPanelProps) {
+export function ProjectPanel({ strings, project, target, issues, newId, commit, onRename, onSelectAsset }: ProjectPanelProps) {
   const s = strings.details;
   return (
     <>
@@ -51,6 +54,7 @@ export function ProjectPanel({ strings, project, target, issues, onRename, onSel
           )}
         </dl>
       </section>
+      <VariablesPanel strings={strings} project={project} newId={newId} commit={commit} />
       <IssueList strings={strings} project={project} issues={issues} onSelectAsset={onSelectAsset} />
     </>
   );

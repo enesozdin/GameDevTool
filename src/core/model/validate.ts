@@ -6,6 +6,8 @@ import type { CellValue, Column, ColumnType, ScalarType, TableAsset } from "./ta
 import { ULID_PATTERN } from "../ids.ts";
 import type { Asset } from "./project.ts";
 import { validateProductionGraph } from "../production/validate-graph.ts";
+import { ConditionCompiler, exprIssue } from "../expr/conditions.ts";
+import { KEYWORDS } from "../expr/syntax.ts";
 
 /**
  * Semantic checks that a structural schema cannot express: global id uniqueness,
@@ -30,6 +32,9 @@ export function validateProject(project: Project, index: ReferenceIndex = buildR
     if (!variableNames.add(variable.name)) {
       issues.push({ severity: "error", code: "duplicate-name", path: ["manifest", "variables", i, "name"], params: { name: variable.name } });
     }
+    if (KEYWORDS.has(variable.name.toLowerCase())) {
+      issues.push({ severity: "error", code: "reserved-name", path: ["manifest", "variables", i, "name"], params: { name: variable.name } });
+    }
     if (variable.type === "enum") {
       checkEnumOptions(variable.options, ["manifest", "variables", i, "options"], claimId, issues);
       if (!variable.options.some((o) => o.id === variable.default)) {
@@ -42,17 +47,18 @@ export function validateProject(project: Project, index: ReferenceIndex = buildR
 
   // Assets
   const locKeys = new Set<string>();
+  const conditions = new ConditionCompiler(project.manifest.variables);
   const assetsById = new Map<Id, Asset>();
   for (const asset of project.assets) assetsById.set(asset.id, asset);
   project.assets.forEach((asset, assetIndex) => {
     claimId(asset.id, () => ["assets", assetIndex, "id"]);
     if (asset.kind === "table") {
       validateTable(asset, assetIndex, claimId, locKeys, issues);
-      if (asset.role !== undefined) validateRole(asset, assetIndex, assetsById, issues);
+      if (asset.role !== undefined) validateRole(asset, assetIndex, assetsById, conditions, issues);
     } else if (asset.kind === "production-graph") {
       asset.nodes.forEach((node, i) => claimId(node.id, () => ["assets", assetIndex, "nodes", i, "id"]));
       asset.edges.forEach((edge, i) => claimId(edge.id, () => ["assets", assetIndex, "edges", i, "id"]));
-      validateProductionGraph(project, asset, assetIndex, assetsById, issues);
+      validateProductionGraph(project, asset, assetIndex, assetsById, issues, conditions);
     }
   });
 
@@ -149,7 +155,7 @@ const isStacks: ColumnCheck = (t) => t.kind === "stacks";
 const isString: ColumnCheck = (t) => t.kind === "string";
 const isStringList: ColumnCheck = (t) => t.kind === "list" && t.item.kind === "string";
 
-function validateRole(table: TableAsset, assetIndex: number, assets: ReadonlyMap<Id, Asset>, issues: Issue[]): void {
+function validateRole(table: TableAsset, assetIndex: number, assets: ReadonlyMap<Id, Asset>, conditions: ConditionCompiler, issues: Issue[]): void {
   const role = table.role!;
   const columns = new Map<Id, Column>();
   for (const column of table.columns) columns.set(column.id, column);
@@ -185,7 +191,15 @@ function validateRole(table: TableAsset, assetIndex: number, assets: ReadonlyMap
       }
       check("time", role.time, isNumber);
       checkTableRole("machine", check("machine", role.machine, (t) => t.kind === "reference"), "machines");
-      check("gate", role.gate, isString);
+      const gate = check("gate", role.gate, isString);
+      if (gate !== undefined) {
+        table.rows.forEach((row, r) => {
+          const source = row.cells[gate.id];
+          if (typeof source !== "string" || source.trim() === "") return;
+          const c = conditions.compile(source);
+          if (!c.ok) issues.push(exprIssue(["assets", assetIndex, "rows", r, "cells", gate.id], c.error));
+        });
+      }
       return;
     }
     case "machines":

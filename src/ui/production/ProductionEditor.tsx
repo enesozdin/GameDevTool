@@ -21,6 +21,7 @@ import {
   autoLayout,
   canConnect,
   compileCatalog,
+  ConditionCompiler,
   compileNetwork,
   moveNodes,
   RATE_EPSILON,
@@ -88,6 +89,8 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
   const catalog = useMemo(() => compileCatalog(project, graph.recipes, graph.items), [itemsAsset, recipesAsset, machinesAsset, graph.recipes, graph.items]);
   const network = useMemo(() => compileNetwork(graph, catalog), [graph, catalog]);
   const result = useMemo(() => solveNetwork(network, mode), [network, mode]);
+  // Variables change rarely; one compile cache per variable list.
+  const conditions = useMemo(() => new ConditionCompiler(project.manifest.variables), [project.manifest.variables]);
   const nodesById = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph.nodes]);
 
   const view: ProductionView = useMemo(
@@ -259,6 +262,7 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
             <Inspector
               strings={strings}
               catalog={catalog}
+              conditions={conditions}
               unit={unit}
               node={selectedNode}
               edge={selectedEdge}

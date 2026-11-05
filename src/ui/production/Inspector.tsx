@@ -1,5 +1,6 @@
-import type { Catalog, GraphEdge, GraphNode, Id } from "../../core/index.ts";
+import type { Catalog, ConditionCompiler, GraphEdge, GraphNode, Id } from "../../core/index.ts";
 import { GRAPH_LIMITS } from "../../core/index.ts";
+import { ConditionField } from "../components/ConditionField.tsx";
 import { NumberField } from "../components/NumberField.tsx";
 import type { UiStrings } from "../strings.ts";
 import { UNIT_SECONDS, type RateUnit } from "./format.ts";
@@ -7,6 +8,7 @@ import { UNIT_SECONDS, type RateUnit } from "./format.ts";
 export interface InspectorProps {
   readonly strings: UiStrings;
   readonly catalog: Catalog;
+  readonly conditions: ConditionCompiler;
   readonly unit: RateUnit;
   readonly node: GraphNode | undefined;
   readonly edge: GraphEdge | undefined;
@@ -19,7 +21,7 @@ export interface InspectorProps {
 /** Avoids 0.1 × 60 → 6.000000000000001 in the fields. */
 const tidy = (n: number) => Number(n.toPrecision(12));
 
-export function Inspector({ strings, catalog, unit, node, edge, selectionSize, onNodeChange, onEdgeRatio, onDelete }: InspectorProps) {
+export function Inspector({ strings, catalog, conditions, unit, node, edge, selectionSize, onNodeChange, onEdgeRatio, onDelete }: InspectorProps) {
   const s = strings.production;
   const factor = UNIT_SECONDS[unit];
   const unitName = s.unitName[unit] ?? unit;
@@ -121,10 +123,7 @@ export function Inspector({ strings, catalog, unit, node, edge, selectionSize, o
             />
           )}
           {node.type === "gate" && (
-            <div className="field">
-              <label htmlFor="pi-condition">{s.fieldCondition}</label>
-              <input id="pi-condition" type="text" spellCheck={false} value={node.condition} maxLength={10_000} onChange={(e) => onNodeChange(node.id, { condition: e.target.value })} />
-            </div>
+            <ConditionField id="pi-condition" label={s.fieldCondition} strings={strings} value={node.condition} conditions={conditions} onCommit={(condition) => onNodeChange(node.id, { condition })} />
           )}
         </div>
       )}

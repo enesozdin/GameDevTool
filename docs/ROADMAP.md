@@ -28,7 +28,7 @@ app. It does not depend on any single engine.
 | Charts | uPlot |
 | Markdown | `marked` lexer only. Tokens are rendered to React elements by our code, so no HTML strings are ever produced. |
 | Validation & types | Zod (`zod/mini` import for small bundle size) |
-| Expression language | Own, **one language** shared by table formulas, production gates, dialogue conditions and loot rules: tokenizer → parser → AST → compiled closures (no `eval`). Published spec + function list. |
+| Expression language | Own, **one language** shared by table formulas, production gates, dialogue conditions and loot rules: tokenizer → parser → AST → compiled closures (no `eval`). Published spec + function list: [EXPRESSIONS.md](EXPRESSIONS.md). |
 | Undo/redo | Own command/patch-based history in `core`, used by every tool |
 | Storage | Own thin wrappers over the File System Access API, IndexedDB and Save/Open file |
 | CSV/TSV, IDs (ULID), seeded PRNG (xoshiro128**) | Own, small |
@@ -48,7 +48,7 @@ app. It does not depend on any single engine.
     build/      Build script (esbuild API) → dist/GameDevTool.html
     tests/      Unit tests (mostly core)
     schema/     Published JSON Schema files
-    docs/       ROADMAP.md, DEPENDENCIES.md, PROJECT_FORMAT.md, expression language spec
+    docs/       ROADMAP.md, DEPENDENCIES.md, PROJECT_FORMAT.md, EXPRESSIONS.md (expression language spec)
 
 ### 2.3 Data Model
 
@@ -323,7 +323,10 @@ ready after ~64 days.
 | Editor: library with drag & drop, auto layout, rate labels, deficit/bottleneck colors | ✅ |
 | Group nodes for sub-chains (IDEF0 decomposition) | ⏳ |
 | Tag-matched ports ("Any Fuel") | ⏳ |
-| Gate conditions and "used before unlocked" validation | ⏳ needs the expression language |
+| Expression language: tokenizer, parser, type checker, closure compiler, spec ([EXPRESSIONS.md](EXPRESSIONS.md)) | ✅ |
+| Project variables editor (bool, int, float, string, enum); renames rewrite conditions | ✅ |
+| Gate conditions (live errors in the inspector) and "used before unlocked" validation | ✅ |
+| Gates in the solver / Monte Carlo (evaluate conditions against variable values) | ⏳ |
 | Recipe choice per item in the calculator UI; phone rate-calculator view | ⏳ |
 | Creating enum / reference / list / stacks columns from the UI | ⏳ |
 | Monte Carlo histograms (uPlot) | ⏳ |

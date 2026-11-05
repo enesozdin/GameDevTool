@@ -429,6 +429,30 @@ input[aria-invalid="true"] {
   color: var(--warn);
 }
 
+/* ---- Variables --------------------------------------------------------------------- */
+
+.variables {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.variable {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0 12px;
+  align-items: start;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.variable .actions {
+  align-self: end;
+  margin-bottom: 12px;
+}
+
 .issue-path {
   color: var(--muted);
   font-size: 0.8125rem;

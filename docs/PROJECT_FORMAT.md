@@ -29,6 +29,9 @@ The Production Chain Editor stores its data in ordinary assets:
   (source, recipe, storage, sink, splitter, merger, gate; each with a position) and
   `edges` (`source`, `target`, `item`, optional `ratio`). Rates are stored in items per
   second; the project's `rateUnit` setting only changes the display.
+- **Conditions** (gate node `condition`, the recipe role's `gate` column) are stored as
+  source text in the [expression language](EXPRESSIONS.md). They refer to
+  `manifest.variables` by name; enum variables store option ids.
 
 Adding these kinds was backward compatible: schema version 1 files stay valid.
 

@@ -511,6 +511,8 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
               project={project}
               target={state.target}
               issues={issues}
+              newId={newId}
+              commit={commitChange}
               onRename={(name) => commitChange(renameProject(project, name))}
               onSelectAsset={setSelectedId}
             />

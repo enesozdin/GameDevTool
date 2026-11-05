@@ -4,6 +4,8 @@
  * satisfy the same `UiStrings` shape. Core returns codes (issue codes, change labels,
  * error codes); this file turns them into text.
  */
+const EXPR_TYPE_NAMES: Readonly<Record<string, string>> = { bool: "true/false", number: "a number", string: "text" };
+
 export const en = {
   appName: "GameDevTool",
   version: (v: string) => `Version ${v}`,
@@ -102,6 +104,24 @@ export const en = {
     } as Record<string, string>,
   },
 
+  variables: {
+    heading: "Variables",
+    hint: "Flags, counters and quest states. Gates and unlock conditions refer to them by name, e.g. Level >= 5 and HasForge.",
+    empty: "No variables yet.",
+    add: "Add variable",
+    defaultName: "NewVariable",
+    search: "Search variables",
+    moreHidden: (n: number) => `${n} more not shown. Use the search.`,
+    name: "Name",
+    nameInvalid: "Use letters, digits and _ (not starting with a digit), unique, not and/or/not/true/false.",
+    type: "Type",
+    types: { bool: "Yes/No", int: "Integer", float: "Number", string: "Text", enum: "Choice (enum)" } as Record<string, string>,
+    defaultValue: "Start value",
+    options: "Options (comma-separated)",
+    optionsInvalid: "Enter unique option names: letters, digits and _.",
+    remove: (name: string) => `Delete variable ${name}`,
+  },
+
   issues: {
     heading: "Validation",
     none: "No problems found.",
@@ -139,7 +159,80 @@ export const en = {
       "input-unconnected": "Input is not connected",
       "loop-without-source": "Loop with no source",
       unreachable: "No source reaches this node",
+      "gate-condition-empty": "Gate has no condition",
+      "used-before-unlocked": "Recipe can be unlocked before one of its inputs",
+      "reserved-name": "Name is a reserved word (and, or, not, true, false)",
+      "expr-empty": "Expression is empty",
+      "expr-too-long": "Expression is too long",
+      "expr-too-deep": "Expression is nested too deeply",
+      "expr-unexpected-char": "Expression contains an invalid character",
+      "expr-unterminated-string": "Text in quotes is not closed",
+      "expr-bad-escape": "Unknown escape sequence in text",
+      "expr-bad-number": "Invalid number",
+      "expr-unexpected-token": "Expression syntax error",
+      "expr-expected": "Expression syntax error",
+      "expr-chained-comparison": "Comparisons cannot be chained",
+      "expr-unknown-name": "Unknown variable in expression",
+      "expr-unknown-function": "Unknown function in expression",
+      "expr-arg-count": "Wrong number of function arguments",
+      "expr-type": "Expression has the wrong type",
+      "expr-unknown-option": "Unknown enum option in expression",
     } as Record<string, string>,
+  },
+
+  /** Expression language messages (docs/EXPRESSIONS.md). */
+  expression: {
+    at: (position: number) => `(at character ${position})`,
+    noVariables: "No project variables yet. Conditions can only use constants.",
+    variables: (names: string, more: number) => `Variables: ${names}${more > 0 ? ` and ${more} more` : ""}`,
+    message(code: string, p: Readonly<Record<string, string | number>>): string {
+      const typeName = (t: string | number | undefined) => {
+        const name = String(t ?? "");
+        return name.startsWith("enum ") ? `a ${name.slice(5)} value` : (EXPR_TYPE_NAMES[name] ?? name);
+      };
+      switch (code) {
+        case "expr-empty":
+          return "Enter a condition.";
+        case "expr-too-long":
+          return `The expression is longer than ${p.limit} characters.`;
+        case "expr-too-deep":
+          return `The expression is nested more than ${p.limit} levels deep.`;
+        case "expr-unexpected-char":
+          return `"${p.char}" is not allowed here.`;
+        case "expr-unterminated-string":
+          return "The text in quotes is missing its closing quote.";
+        case "expr-bad-escape":
+          return 'Unknown escape. Use \\, \", \n or \t.';
+        case "expr-bad-number":
+          return "This is not a valid number.";
+        case "expr-unexpected-token":
+          return p.found === "" ? "The expression ends too early." : `"${p.found}" is not expected here.`;
+        case "expr-expected":
+          return `"${p.expected}" is missing.`;
+        case "expr-chained-comparison":
+          return "Comparisons cannot be chained. Use and: a < b and b < c.";
+        case "expr-unknown-name":
+          return `There is no variable named ${p.name}.`;
+        case "expr-unknown-function":
+          return `There is no function named ${p.name}.`;
+        case "expr-arg-count":
+          return p.min === p.max
+            ? `${p.name}() takes ${p.min} ${p.min === 1 ? "argument" : "arguments"}.`
+            : p.max === -1
+              ? `${p.name}() takes at least ${p.min} ${p.min === 1 ? "argument" : "arguments"}.`
+              : `${p.name}() takes at most ${p.max} arguments.`;
+        case "expr-type":
+          return `Expected ${typeName(p.expected)}, found ${typeName(p.found)}.`;
+        case "expr-unknown-option":
+          return `${p.enum} has no option "${p.value}".`;
+        case "expr-division-by-zero":
+          return "Division by zero.";
+        case "expr-not-finite":
+          return "The result is too large or not a number.";
+        default:
+          return code;
+      }
+    },
   },
 
   /** Change labels from core (history entries). */
@@ -165,6 +258,10 @@ export const en = {
     "rename-column": "rename column",
     "remove-column": "delete column",
     "import-rows": "import CSV",
+    "add-variable": "add variable",
+    "remove-variable": "delete variable",
+    "edit-variable": "edit variable",
+    "rename-variable": "rename variable",
   } as Record<string, string>,
 
   /** Open/load error codes. */
