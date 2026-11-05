@@ -2,8 +2,10 @@ import type { Issue, IssuePath } from "../result.ts";
 import type { EnumOption, Id } from "./primitives.ts";
 import type { Project } from "./project.ts";
 import { buildReferenceIndex, type ReferenceIndex } from "./references.ts";
-import type { CellValue, ColumnType, ScalarType, TableAsset } from "./table.ts";
+import type { CellValue, Column, ColumnType, ScalarType, TableAsset } from "./table.ts";
 import { ULID_PATTERN } from "../ids.ts";
+import type { Asset } from "./project.ts";
+import { validateProductionGraph } from "../production/validate-graph.ts";
 
 /**
  * Semantic checks that a structural schema cannot express: global id uniqueness,
@@ -40,9 +42,18 @@ export function validateProject(project: Project, index: ReferenceIndex = buildR
 
   // Assets
   const locKeys = new Set<string>();
+  const assetsById = new Map<Id, Asset>();
+  for (const asset of project.assets) assetsById.set(asset.id, asset);
   project.assets.forEach((asset, assetIndex) => {
     claimId(asset.id, () => ["assets", assetIndex, "id"]);
-    if (asset.kind === "table") validateTable(asset, assetIndex, claimId, locKeys, issues);
+    if (asset.kind === "table") {
+      validateTable(asset, assetIndex, claimId, locKeys, issues);
+      if (asset.role !== undefined) validateRole(asset, assetIndex, assetsById, issues);
+    } else if (asset.kind === "production-graph") {
+      asset.nodes.forEach((node, i) => claimId(node.id, () => ["assets", assetIndex, "nodes", i, "id"]));
+      asset.edges.forEach((edge, i) => claimId(edge.id, () => ["assets", assetIndex, "edges", i, "id"]));
+      validateProductionGraph(project, asset, assetIndex, assetsById, issues);
+    }
   });
 
   checkDocumentCycles(project, issues);
@@ -128,6 +139,63 @@ function validateTable(table: TableAsset, assetIndex: number, claimId: ClaimId, 
   });
 }
 
+// ---------------------------------------------------------------------------------------
+// Table roles (Production Chain Editor)
+// ---------------------------------------------------------------------------------------
+
+type ColumnCheck = (type: ColumnType) => boolean;
+const isNumber: ColumnCheck = (t) => t.kind === "int" || t.kind === "float";
+const isStacks: ColumnCheck = (t) => t.kind === "stacks";
+const isString: ColumnCheck = (t) => t.kind === "string";
+const isStringList: ColumnCheck = (t) => t.kind === "list" && t.item.kind === "string";
+
+function validateRole(table: TableAsset, assetIndex: number, assets: ReadonlyMap<Id, Asset>, issues: Issue[]): void {
+  const role = table.role!;
+  const columns = new Map<Id, Column>();
+  for (const column of table.columns) columns.set(column.id, column);
+  const check = (field: string, columnId: Id | undefined, ok: ColumnCheck): Column | undefined => {
+    if (columnId === undefined) return undefined;
+    const path: IssuePath = ["assets", assetIndex, "role", field];
+    const column = columns.get(columnId);
+    if (column === undefined) issues.push({ severity: "error", code: "role-column-missing", path, params: { field } });
+    else if (!ok(column.type)) issues.push({ severity: "error", code: "role-column-type", path, params: { field } });
+    else return column;
+    return undefined;
+  };
+  const checkTableRole = (field: string, column: Column | undefined, kind: "items" | "machines"): void => {
+    if (column === undefined || (column.type.kind !== "stacks" && column.type.kind !== "reference")) return;
+    const target = assets.get(column.type.table);
+    // A missing table is reported as a broken reference.
+    if (target !== undefined && (target.kind !== "table" || target.role?.kind !== kind)) {
+      issues.push({ severity: "error", code: "role-mismatch", path: ["assets", assetIndex, "role", field], params: { expected: kind } });
+    }
+  };
+
+  switch (role.kind) {
+    case "items":
+      check("tags", role.tags, isStringList);
+      return;
+    case "recipes": {
+      const inputs = check("inputs", role.inputs, isStacks);
+      const outputs = check("outputs", role.outputs, isStacks);
+      checkTableRole("inputs", inputs, "items");
+      checkTableRole("outputs", outputs, "items");
+      if (inputs !== undefined && outputs !== undefined && inputs.type.kind === "stacks" && outputs.type.kind === "stacks" && inputs.type.table !== outputs.type.table) {
+        issues.push({ severity: "error", code: "role-items-mismatch", path: ["assets", assetIndex, "role", "outputs"] });
+      }
+      check("time", role.time, isNumber);
+      checkTableRole("machine", check("machine", role.machine, (t) => t.kind === "reference"), "machines");
+      check("gate", role.gate, isString);
+      return;
+    }
+    case "machines":
+      check("speed", role.speed, isNumber);
+      check("power", role.power, isNumber);
+      checkTableRole("buildCost", check("buildCost", role.buildCost, isStacks), "items");
+      return;
+  }
+}
+
 function checkColumnType(type: ColumnType, path: IssuePath, claimId: ClaimId, issues: Issue[]): void {
   if (type.kind === "list") {
     checkColumnType(type.item, [...path, "item"], claimId, issues);
@@ -176,6 +244,24 @@ function checkCell(type: ColumnType, value: Exclude<CellValue, null>, at: CellLo
       }
       return;
     }
+    case "stacks": {
+      if (!Array.isArray(value)) {
+        issues.push(mismatch(cellPath(at), type.kind));
+        return;
+      }
+      const seen = new Set<Id>();
+      for (let i = 0; i < value.length; i++) {
+        const stack = value[i];
+        if (stack === null || typeof stack !== "object") {
+          issues.push(mismatch(cellPath(at, i), type.kind));
+        } else if (seen.has(stack.item)) {
+          issues.push({ severity: "warning", code: "duplicate-stack-item", path: cellPath(at, i, "item") });
+        } else {
+          seen.add(stack.item);
+        }
+      }
+      return;
+    }
     case "list": {
       if (!Array.isArray(value)) {
         issues.push(mismatch(cellPath(at), type.kind));
@@ -186,7 +272,7 @@ function checkCell(type: ColumnType, value: Exclude<CellValue, null>, at: CellLo
       }
       for (let i = 0; i < value.length; i++) {
         const item = value[i];
-        if (item === null || item === undefined) issues.push(mismatch(cellPath(at, i), type.item.kind));
+        if (item === null || item === undefined || typeof item === "object") issues.push(mismatch(cellPath(at, i), type.item.kind));
         else checkScalar(type.item, item, at, i, issues);
       }
       return;

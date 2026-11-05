@@ -1,6 +1,7 @@
 import type { IssuePath } from "../result.ts";
 import type { Id } from "./primitives.ts";
 import type { Asset, Project } from "./project.ts";
+import type { ProductionGraphAsset } from "./production-graph.ts";
 import type { ColumnType, TableAsset } from "./table.ts";
 
 export type ReferenceKind =
@@ -9,7 +10,11 @@ export type ReferenceKind =
   /** A cell points to a row of the column's target table. */
   | "cell-row"
   /** A document page points to its parent page. */
-  | "document-parent";
+  | "document-parent"
+  /** A production graph points to its items or recipes table. */
+  | "graph-table"
+  /** A production graph node or connection points to an item or recipe row. */
+  | "graph-row";
 
 export interface Reference {
   readonly kind: ReferenceKind;
@@ -19,7 +24,7 @@ export interface Reference {
   readonly path: IssuePath;
   /** Referenced asset id (column-table, document-parent) or row id (cell-row). */
   readonly target: Id;
-  /** For cell-row: the table the row must belong to. */
+  /** For cell-row and graph-row: the table the row must belong to. */
   readonly targetTable?: Id;
 }
 
@@ -34,7 +39,7 @@ export interface ReferenceIndex {
 const EMPTY: readonly Reference[] = [];
 
 function referenceTable(type: ColumnType): Id | undefined {
-  if (type.kind === "reference") return type.table;
+  if (type.kind === "reference" || type.kind === "stacks") return type.table;
   if (type.kind === "list" && type.item.kind === "reference") return type.item.table;
   return undefined;
 }
@@ -69,6 +74,10 @@ export function buildReferenceIndex(project: Project): ReferenceIndex {
           parent === undefined || parent.kind !== "document",
         );
       }
+      return;
+    }
+    if (asset.kind === "production-graph") {
+      collectGraphReferences(asset, assetIndex, assets, rowOwner, add);
       return;
     }
     collectTableReferences(asset, assetIndex, assets, rowOwner, add);
@@ -116,9 +125,33 @@ function collectTableReferences(
         addRow(value, ["assets", assetIndex, "rows", rowIndex, "cells", column.id]);
       } else if (Array.isArray(value)) {
         value.forEach((item, itemIndex) => {
-          if (typeof item === "string") addRow(item, ["assets", assetIndex, "rows", rowIndex, "cells", column.id, itemIndex]);
+          const path = ["assets", assetIndex, "rows", rowIndex, "cells", column.id, itemIndex];
+          if (typeof item === "string") addRow(item, path);
+          else if (column.type.kind === "stacks" && item !== null && typeof item === "object") addRow(item.item, [...path, "item"]);
         });
       }
     });
   });
+}
+
+function collectGraphReferences(
+  graph: ProductionGraphAsset,
+  assetIndex: number,
+  assets: ReadonlyMap<Id, Asset>,
+  rowOwner: ReadonlyMap<Id, Id>,
+  add: (ref: Reference, isBroken: boolean) => void,
+): void {
+  const base = ["assets", assetIndex] as const;
+  for (const field of ["items", "recipes"] as const) {
+    const target = assets.get(graph[field]);
+    add({ kind: "graph-table", source: graph.id, path: [...base, field], target: graph[field] }, target === undefined || target.kind !== "table");
+  }
+  const addRow = (rowId: Id, table: Id, path: IssuePath): void =>
+    add({ kind: "graph-row", source: graph.id, path, target: rowId, targetTable: table }, rowOwner.get(rowId) !== table);
+
+  graph.nodes.forEach((node, i) => {
+    if (node.type === "recipe") addRow(node.recipe, graph.recipes, [...base, "nodes", i, "recipe"]);
+    else addRow(node.item, graph.items, [...base, "nodes", i, "item"]);
+  });
+  graph.edges.forEach((edge, i) => addRow(edge.item, graph.items, [...base, "edges", i, "item"]));
 }

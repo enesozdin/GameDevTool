@@ -1,0 +1,131 @@
+/**
+ * Monte Carlo runs for chance-based outputs and random sources (ROADMAP §4.1). Pure and
+ * seeded, so a run is reproducible; the app calls it from a Web Worker in chunks.
+ *
+ * Each run samples what one period of `seconds` actually yields:
+ * - a "poisson" source delivers Poisson(rate × seconds) items;
+ * - an output with chance p over c cycles yields Binomial(c, p) × count items, where c is
+ *   the cycle count of the deterministic supply-driven solution.
+ * The supply-driven solver then turns those effective rates into sink output. Using the
+ * deterministic cycle count is an approximation: upstream randomness changes c slightly,
+ * which only matters for long chains of chance outputs.
+ */
+import { createRandom, sampleBinomial, samplePoisson, type Random } from "../random.ts";
+import type { Network } from "./network.ts";
+import { NodeKind } from "./network.ts";
+import { solveNetwork, type SolveResult } from "./solve.ts";
+
+export interface MonteCarloOptions {
+  readonly runs: number;
+  /** Length of one simulated period in seconds (e.g. 3600 for "per hour"). */
+  readonly seconds: number;
+  readonly seed: number;
+}
+
+export interface MonteCarloState {
+  readonly random: Random;
+  readonly base: SolveResult;
+  /** Sink node indices, in node order. */
+  readonly sinks: Int32Array;
+  /** Items per period at each sink, run-major: samples[run * sinks.length + s]. */
+  readonly samples: Float64Array;
+  done: number;
+}
+
+export interface Percentiles {
+  readonly p10: number;
+  readonly p50: number;
+  readonly p90: number;
+  readonly mean: number;
+}
+
+export const MONTE_CARLO_LIMITS = { runs: 100_000, seconds: 1e9 } as const;
+
+/** True if the network has anything random; without it every run is identical. */
+export function hasRandomness(net: Network): boolean {
+  for (let p = 0; p < net.outChance.length; p++) if (net.outChance[p]! < 1) return true;
+  for (let u = 0; u < net.nodeCount; u++) {
+    const node = net.graph.nodes[u]!;
+    if (node.type === "source" && node.distribution === "poisson") return true;
+  }
+  return false;
+}
+
+export function startMonteCarlo(net: Network, options: MonteCarloOptions): MonteCarloState {
+  const runs = Math.max(1, Math.min(MONTE_CARLO_LIMITS.runs, Math.floor(options.runs)));
+  const sinks: number[] = [];
+  for (let u = 0; u < net.nodeCount; u++) if (net.kind[u] === NodeKind.sink) sinks.push(u);
+  return {
+    random: createRandom(options.seed),
+    base: solveNetwork(net, "supply"),
+    sinks: Int32Array.from(sinks),
+    samples: new Float64Array(runs * sinks.length),
+    done: 0,
+  };
+}
+
+/** Runs up to `count` more runs. Returns true when all runs are done. */
+export function stepMonteCarlo(net: Network, state: MonteCarloState, options: MonteCarloOptions, count: number): boolean {
+  const runs = state.samples.length / Math.max(1, state.sinks.length);
+  const total = state.sinks.length === 0 ? 0 : runs;
+  const seconds = options.seconds;
+  const sourceRate = new Float64Array(net.nodeCount).fill(NaN);
+  const outScale = new Float64Array(net.outItem.length).fill(1);
+  const end = Math.min(total, state.done + count);
+
+  for (let run = state.done; run < end; run++) {
+    for (let u = 0; u < net.nodeCount; u++) {
+      if (net.kind[u] !== NodeKind.source) continue;
+      const node = net.graph.nodes[u]!;
+      if (node.type === "source" && node.distribution === "poisson") {
+        sourceRate[u] = samplePoisson(state.random, net.rate[u]! * seconds) / seconds;
+      }
+    }
+    for (let u = 0; u < net.nodeCount; u++) {
+      const cycles = state.base.activity[u]! * seconds;
+      for (let p = net.outStart[u]!; p < net.outStart[u + 1]!; p++) {
+        const chance = net.outChance[p]!;
+        if (chance >= 1 || !(cycles > 0)) continue;
+        outScale[p] = sampleBinomial(state.random, cycles, chance) / (cycles * chance);
+      }
+    }
+    const result = solveNetwork(net, "supply", { sourceRate, outScale, maxSweeps: 200 });
+    for (let s = 0; s < state.sinks.length; s++) {
+      state.samples[run * state.sinks.length + s] = result.activity[state.sinks[s]!]! * seconds;
+    }
+  }
+  state.done = end;
+  return end >= total;
+}
+
+/** P10 / P50 / P90 and mean per sink over the finished runs. */
+export function monteCarloPercentiles(state: MonteCarloState): Percentiles[] {
+  const sinks = state.sinks.length;
+  const values = new Float64Array(state.done);
+  const out: Percentiles[] = [];
+  for (let s = 0; s < sinks; s++) {
+    let sum = 0;
+    for (let r = 0; r < state.done; r++) {
+      const v = state.samples[r * sinks + s]!;
+      values[r] = v;
+      sum += v;
+    }
+    values.sort();
+    out.push({
+      p10: quantile(values, 0.1),
+      p50: quantile(values, 0.5),
+      p90: quantile(values, 0.9),
+      mean: state.done === 0 ? 0 : sum / state.done,
+    });
+  }
+  return out;
+}
+
+/** Linear interpolation between order statistics (type 7, as in spreadsheets). */
+function quantile(sorted: Float64Array, q: number): number {
+  if (sorted.length === 0) return 0;
+  const h = (sorted.length - 1) * q;
+  const lo = Math.floor(h);
+  const hi = Math.min(sorted.length - 1, lo + 1);
+  return sorted[lo]! + (h - lo) * (sorted[hi]! - sorted[lo]!);
+}

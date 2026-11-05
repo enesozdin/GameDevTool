@@ -1,0 +1,142 @@
+/**
+ * Production graph checks (ROADMAP §4.1 "Validation"): typed connections, unconnected
+ * inputs, loops with no source, unreachable nodes, recipes without a usable cycle time.
+ * Missing rows and tables are reported by the reference index as broken references.
+ */
+import type { Issue, IssuePath } from "../result.ts";
+import type { Id } from "../model/primitives.ts";
+import type { Asset, Project } from "../model/project.ts";
+import type { ProductionGraphAsset } from "../model/production-graph.ts";
+import { compileCatalog } from "./catalog.ts";
+import { compileNetwork, NodeKind } from "./network.ts";
+import { adjacency, stronglyConnected } from "./scc.ts";
+
+export function validateProductionGraph(
+  project: Project,
+  graph: ProductionGraphAsset,
+  assetIndex: number,
+  assets: ReadonlyMap<Id, Asset>,
+  issues: Issue[],
+): void {
+  const base: IssuePath = ["assets", assetIndex];
+  const roleOf = (id: Id) => {
+    const a = assets.get(id);
+    return a?.kind === "table" ? a.role?.kind : undefined;
+  };
+  for (const [field, expected] of [
+    ["items", "items"],
+    ["recipes", "recipes"],
+  ] as const) {
+    const table = assets.get(graph[field]);
+    if (table !== undefined && roleOf(graph[field]) !== expected) {
+      issues.push({ severity: "error", code: "role-mismatch", path: [...base, field], params: { expected } });
+    }
+  }
+
+  const catalog = compileCatalog(project, graph.recipes, graph.items);
+  if (catalog.recipesTable?.role?.kind === "recipes") {
+    const inputs = catalog.recipesTable.columns.find((c) => c.id === (catalog.recipesTable!.role as { inputs: Id }).inputs);
+    if (inputs?.type.kind === "stacks" && inputs.type.table !== graph.items) {
+      issues.push({ severity: "error", code: "graph-items-mismatch", path: [...base, "items"] });
+    }
+  }
+  const net = compileNetwork(graph, catalog);
+  const n = graph.nodes.length;
+
+  // Connections
+  const seen = new Set<string>();
+  graph.edges.forEach((edge, e) => {
+    const path: IssuePath = [...base, "edges", e];
+    const s = net.nodeIndex.get(edge.source);
+    const t = net.nodeIndex.get(edge.target);
+    if (s === undefined || t === undefined) {
+      issues.push({ severity: "error", code: "edge-node-missing", path });
+      return;
+    }
+    if (s === t) {
+      issues.push({ severity: "error", code: "edge-self", path });
+      return;
+    }
+    const key = `${edge.source}>${edge.target}:${edge.item}`;
+    if (seen.has(key)) issues.push({ severity: "warning", code: "duplicate-edge", path });
+    seen.add(key);
+    if (!hasPort(net.outItem, net.outStart, s, edge.item)) {
+      issues.push({ severity: "error", code: "port-mismatch", path: [...path, "item"], params: { side: "output" } });
+    }
+    if (!hasPort(net.inItem, net.inStart, t, edge.item)) {
+      issues.push({ severity: "error", code: "port-mismatch", path: [...path, "item"], params: { side: "input" } });
+    }
+  });
+
+  // Nodes
+  graph.nodes.forEach((node, i) => {
+    const path: IssuePath = [...base, "nodes", i];
+    if (node.type === "recipe") {
+      const recipe = catalog.recipes.get(node.recipe);
+      if (recipe === undefined) return;
+      if (recipe.time === undefined) issues.push({ severity: "error", code: "recipe-time-invalid", path: [...path, "recipe"] });
+      if (recipe.outputs.length === 0) issues.push({ severity: "warning", code: "recipe-no-outputs", path: [...path, "recipe"] });
+    }
+    for (let q = net.inStart[i]!; q < net.inStart[i + 1]!; q++) {
+      if (net.inEdgeStart[q] === net.inEdgeStart[q + 1]) {
+        issues.push({ severity: "warning", code: "input-unconnected", path, params: { item: net.inItem[q]! } });
+      }
+    }
+  });
+
+  // Loops with no way in, and nodes no producer reaches.
+  const { adjStart, adj } = adjacency(n, net.edgeSource, net.edgeTarget);
+  const { component, count, cyclic } = stronglyConnected(n, adjStart, adj);
+  const fed = new Uint8Array(count);
+  const isProducer = (u: number) => net.kind[u] === NodeKind.source || (net.kind[u] === NodeKind.recipe && net.inStart[u] === net.inStart[u + 1]);
+  for (let u = 0; u < n; u++) {
+    if (isProducer(u)) fed[component[u]!] = 1;
+    for (let k = adjStart[u]!; k < adjStart[u + 1]!; k++) {
+      const v = adj[k]!;
+      if (component[v] !== component[u]) fed[component[v]!] = 1;
+    }
+  }
+  const reported = new Uint8Array(count);
+  const sourceless = new Uint8Array(n);
+  for (let u = 0; u < n; u++) {
+    const c = component[u]!;
+    if (cyclic[c] === 1 && fed[c] === 0) {
+      sourceless[u] = 1;
+      if (reported[c] === 0) {
+        reported[c] = 1;
+        issues.push({ severity: "error", code: "loop-without-source", path: [...base, "nodes", u] });
+      }
+    }
+  }
+
+  const reached = new Uint8Array(n);
+  const queue: number[] = [];
+  for (let u = 0; u < n; u++) {
+    if (isProducer(u)) {
+      reached[u] = 1;
+      queue.push(u);
+    }
+  }
+  for (let h = 0; h < queue.length; h++) {
+    const u = queue[h]!;
+    for (let k = adjStart[u]!; k < adjStart[u + 1]!; k++) {
+      const v = adj[k]!;
+      if (reached[v] === 0) {
+        reached[v] = 1;
+        queue.push(v);
+      }
+    }
+  }
+  for (let u = 0; u < n; u++) {
+    // Nodes without any incoming connection already get "input-unconnected".
+    const hasIncoming = net.inEdgeStart[net.inStart[u]!] !== net.inEdgeStart[net.inStart[u + 1]!];
+    if (reached[u] === 0 && sourceless[u] === 0 && hasIncoming) {
+      issues.push({ severity: "warning", code: "unreachable", path: [...base, "nodes", u] });
+    }
+  }
+}
+
+function hasPort(items: readonly Id[], start: Int32Array, node: number, item: Id): boolean {
+  for (let p = start[node]!; p < start[node + 1]!; p++) if (items[p] === item) return true;
+  return false;
+}

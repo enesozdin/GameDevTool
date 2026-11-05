@@ -9,6 +9,7 @@ import {
   LocaleSchema,
   NameSchema,
 } from "./primitives.ts";
+import { ProductionGraphAssetSchema } from "./production-graph.ts";
 import { TableAssetSchema } from "./table.ts";
 
 export const PROJECT_FORMAT = "gamedevtool.project";
@@ -65,12 +66,10 @@ export const ManifestSchema = z.object({
 export type Manifest = z.infer<typeof ManifestSchema>;
 
 /**
- * Asset kinds. Phase 0 defines the kinds whose shape is already specified; the
- * production graph (Phase 1), loot table / economy model (Phase 3) and dialogue/quest
- * graph (Phase 5) are added in their phases. Adding a kind is backward compatible and
- * needs no migration.
+ * Asset kinds. Loot table / economy model (Phase 3) and dialogue/quest graph (Phase 5)
+ * are added in their phases. Adding a kind is backward compatible and needs no migration.
  */
-export const AssetSchema = z.discriminatedUnion("kind", [DocumentAssetSchema, TableAssetSchema]);
+export const AssetSchema = z.discriminatedUnion("kind", [DocumentAssetSchema, TableAssetSchema, ProductionGraphAssetSchema]);
 export type Asset = z.infer<typeof AssetSchema>;
 export type AssetKind = Asset["kind"];
 
