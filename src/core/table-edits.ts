@@ -5,7 +5,9 @@
 import type { Change, Patch } from "./history.ts";
 import { IdentifierSchema, type Id } from "./model/primitives.ts";
 import type { Project } from "./model/project.ts";
-import { TABLE_LIMITS, type CellValue, type Column, type Row, type TableAsset } from "./model/table.ts";
+import { TABLE_LIMITS, type CellValue, type Column, type ColumnType, type Row, type ScalarType, type TableAsset } from "./model/table.ts";
+import type { IdGenerator } from "./ids.ts";
+import { err, ok, type Result } from "./result.ts";
 
 export function isValidIdentifier(name: string): boolean {
   return IdentifierSchema.safeParse(name).success;
@@ -105,4 +107,76 @@ export function replaceRows(project: Project, tableId: Id, rows: readonly Row[])
   const at = tableAt(project, tableId);
   if (at === null || rows.length > TABLE_LIMITS.rowsPerTable) return null;
   return { label: "import-rows", patches: [{ op: "set", path: ["assets", at.index, "rows"], value: rows }] };
+}
+
+// ---------------------------------------------------------------------------------------
+// Column types from the "add column" form
+// ---------------------------------------------------------------------------------------
+
+/** Most enum options a column may have (EnumOptionsSchema). */
+export const MAX_ENUM_OPTIONS = 1_000;
+
+/** List item types that can be created from the UI. */
+export type ScalarSpec =
+  | { readonly kind: "int" | "float" | "string" | "bool" }
+  | { readonly kind: "enum"; readonly options: string }
+  | { readonly kind: "reference"; readonly table: Id };
+
+/** What the user picked: simple kinds, enum options as text ("Common, Rare"), target tables. */
+export type ColumnSpec =
+  | ScalarSpec
+  | { readonly kind: "text" }
+  | { readonly kind: "stacks"; readonly table: Id }
+  | { readonly kind: "list"; readonly item: ScalarSpec };
+
+export type ColumnSpecError = "enum-empty" | "enum-invalid-name" | "enum-duplicate" | "enum-too-many" | "table-missing";
+
+/**
+ * Enum option names from comma- or newline-separated text. Names must be identifiers and
+ * unique (case-insensitive); blanks are skipped.
+ */
+export function parseEnumOptions(text: string): Result<string[], { code: ColumnSpecError; name?: string }> {
+  const names = text
+    .split(/[,\n]/)
+    .map((t) => t.trim())
+    .filter((t) => t !== "");
+  if (names.length === 0) return err({ code: "enum-empty" });
+  if (names.length > MAX_ENUM_OPTIONS) return err({ code: "enum-too-many" });
+  const seen = new Set<string>();
+  for (const name of names) {
+    if (!isValidIdentifier(name)) return err({ code: "enum-invalid-name", name });
+    const key = name.toLowerCase();
+    if (seen.has(key)) return err({ code: "enum-duplicate", name });
+    seen.add(key);
+  }
+  return ok(names);
+}
+
+/** Builds a column type; enum options get new ids, target tables must be table assets. */
+export function columnTypeFromSpec(project: Project, spec: ColumnSpec, newId: IdGenerator): Result<ColumnType, { code: ColumnSpecError; name?: string }> {
+  const isTable = (id: Id) => project.assets.some((a) => a.id === id && a.kind === "table");
+  const scalar = (sp: ScalarSpec): Result<ScalarType, { code: ColumnSpecError; name?: string }> => {
+    switch (sp.kind) {
+      case "enum": {
+        const names = parseEnumOptions(sp.options);
+        return names.ok ? ok({ kind: "enum", options: names.value.map((name) => ({ id: newId(), name })) }) : names;
+      }
+      case "reference":
+        return isTable(sp.table) ? ok({ kind: "reference", table: sp.table }) : err({ code: "table-missing" });
+      default:
+        return ok({ kind: sp.kind });
+    }
+  };
+  switch (spec.kind) {
+    case "text":
+      return ok({ kind: "text" });
+    case "stacks":
+      return isTable(spec.table) ? ok({ kind: "stacks", table: spec.table }) : err({ code: "table-missing" });
+    case "list": {
+      const item = scalar(spec.item);
+      return item.ok ? ok({ kind: "list", item: item.value }) : item;
+    }
+    default:
+      return scalar(spec);
+  }
 }

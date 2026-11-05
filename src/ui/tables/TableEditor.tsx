@@ -27,6 +27,7 @@ import {
 } from "../../core/index.ts";
 import type { UiStrings } from "../strings.ts";
 import { cellToText, textToCell } from "./cell-text.ts";
+import { NewColumnForm } from "./NewColumnForm.tsx";
 
 export interface TableEditorProps {
   readonly strings: UiStrings;
@@ -45,7 +46,6 @@ const ROW_HEIGHT = 40;
 const NAME_WIDTH = 200;
 const COLUMN_WIDTH = 180;
 const ACTION_WIDTH = 48;
-const NEW_COLUMN_KINDS = ["float", "int", "string", "bool", "text"] as const;
 
 /**
  * Typed grid for a table asset. Rows are virtualized (DOM size stays constant), cells
@@ -56,8 +56,6 @@ export function TableEditor({ strings, project, table, newId, commit, saveFile, 
   const s = strings.tables;
   const scrollRef = useRef<HTMLDivElement>(null);
   const [format, setFormat] = useState<CsvFormatId>("generic");
-  const [columnName, setColumnName] = useState("");
-  const [columnKind, setColumnKind] = useState<(typeof NEW_COLUMN_KINDS)[number]>("float");
   const names = useMemo(() => rowNames(project), [project]);
 
   const virtualizer = useVirtualizer({
@@ -72,12 +70,6 @@ export function TableEditor({ strings, project, table, newId, commit, saveFile, 
   const onAddRow = () => {
     commit(addRow(project, table.id, { id: newId(), name: uniqueRowName(table, "NewRow"), cells: {} }));
     requestAnimationFrame(() => virtualizer.scrollToIndex(table.rows.length, { align: "end" }));
-  };
-
-  const onAddColumn = () => {
-    if (!isValidIdentifier(columnName) || table.columns.some((c) => c.name.toLowerCase() === columnName.toLowerCase())) return;
-    commit(addColumn(project, table.id, { id: newId(), name: columnName, type: { kind: columnKind } }));
-    setColumnName("");
   };
 
   const onExport = () => {
@@ -100,8 +92,6 @@ export function TableEditor({ strings, project, table, newId, commit, saveFile, 
     notify(s.imported(rows.length, removed, issues.filter((i) => i.code === "invalid-value").length), issues.length > 0 ? "error" : "info");
   };
 
-  const columnValid = isValidIdentifier(columnName) && !table.columns.some((c) => c.name.toLowerCase() === columnName.toLowerCase());
-
   return (
     <div className="teditor">
       <div className="toolbar" role="toolbar" aria-label={strings.assets.kind.table}>
@@ -109,17 +99,7 @@ export function TableEditor({ strings, project, table, newId, commit, saveFile, 
           {s.addRow}
         </button>
         <span className="toolbar-sep" aria-hidden="true" />
-        <input type="text" className="narrow" aria-label={s.columnName} placeholder={s.columnName} value={columnName} aria-invalid={columnName !== "" && !columnValid} onChange={(e) => setColumnName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && onAddColumn()} />
-        <select aria-label={s.columnType} value={columnKind} onChange={(e) => setColumnKind(e.target.value as (typeof NEW_COLUMN_KINDS)[number])}>
-          {NEW_COLUMN_KINDS.map((k) => (
-            <option key={k} value={k}>
-              {s.kinds[k]}
-            </option>
-          ))}
-        </select>
-        <button type="button" onClick={onAddColumn} disabled={!columnValid}>
-          {s.addColumn}
-        </button>
+        <NewColumnForm strings={strings} project={project} table={table} newId={newId} onAdd={(column) => commit(addColumn(project, table.id, column))} />
         <span className="toolbar-sep" aria-hidden="true" />
         <select aria-label={s.format} value={format} onChange={(e) => setFormat(e.target.value as CsvFormatId)}>
           {Object.keys(CSV_FORMATS).map((f) => (

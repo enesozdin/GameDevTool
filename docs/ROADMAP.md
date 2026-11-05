@@ -328,7 +328,7 @@ ready after ~64 days.
 | Gate conditions (live errors in the inspector) and "used before unlocked" validation | ✅ |
 | Gates in the solver / Monte Carlo: conditions evaluated against a scenario of variable values, locked nodes run at 0 | ✅ |
 | Rate calculator view: target item + rate, recipe choice per item (saved with the chain, also used by the bill of materials), machines, raw totals; default view on phones | ✅ |
-| Creating enum / reference / list / stacks columns from the UI | ⏳ |
+| Creating enum / reference / list / stacks / localizable text columns from the UI (enum options, target table, list item type) | ✅ |
 | Monte Carlo histograms (uPlot) | ⏳ |
 
 ### Backlog (post-MVP)
