@@ -22,6 +22,7 @@ import {
   saveProjectFolder,
   undoLabel,
   validateProject,
+  createValidationCache,
   type Asset,
   type Change,
   type FolderIo,
@@ -86,7 +87,9 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
   const project = state.history.present;
   const dirty = isDirty(state);
   const index = useMemo(() => buildReferenceIndex(project), [project]);
-  const issues = useMemo(() => validateProject(project, index), [project, index]);
+  // Unchanged assets keep their findings, so an edit re-checks only what it touched.
+  const validationCache = useMemo(createValidationCache, []);
+  const issues = useMemo(() => validateProject(project, index, validationCache), [project, index, validationCache]);
   const selected = selectedId === null ? undefined : project.assets.find((a) => a.id === selectedId);
   const referenceCount = useMemo(() => (selected ? incomingReferenceCount(index, selected) : 0), [index, selected]);
 

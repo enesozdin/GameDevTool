@@ -115,6 +115,8 @@ export const en = {
     heading: "Variables",
     hint: "Flags, counters and quest states. Gates and unlock conditions refer to them by name, e.g. Level >= 5 and HasForge.",
     empty: "No variables yet.",
+    /** Bool values as written in expressions (shown in the start value picker). */
+    boolValues: { false: "false", true: "true" },
     add: "Add variable",
     defaultName: "NewVariable",
     search: "Search variables",
@@ -356,6 +358,7 @@ export const en = {
     bottleneck: "Bottleneck",
     limitedBy: (what: string) => `Limited by ${what}`,
     limitMachines: "machine count",
+    reportMoreHidden: (n: number) => `${n} smaller ${n === 1 ? "entry" : "entries"} not shown.`,
     notConverged: "The calculation did not settle: a loop produces more than it consumes.",
     inspector: "Selected",
     inspectorEmpty: "Select a node, sub-chain or connection to edit it.",

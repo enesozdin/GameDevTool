@@ -38,6 +38,7 @@ import {
   setScenarioAllOpen,
   setScenarioValue,
   compileNetwork,
+  sameCalculation,
   moveNodes,
   RATE_EPSILON,
   removeGraphElements,
@@ -112,7 +113,12 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
   // Deliberately keyed on the three table objects (not the whole project): edits share
   // structure, so they change identity only when one of these tables is edited.
   const catalog = useMemo(() => compileCatalog(project, graph.recipes, graph.items), [itemsAsset, recipesAsset, machinesAsset, graph.recipes, graph.items]);
-  const network = useMemo(() => compileNetwork(graph, catalog), [graph, catalog]);
+  // Moving, renaming or grouping nodes does not change the calculation: keep the version
+  // of the graph the network was compiled from, so nothing below recompiles or re-solves.
+  const calcRef = useRef(graph);
+  if (!sameCalculation(calcRef.current, graph)) calcRef.current = graph;
+  const calcGraph = calcRef.current;
+  const network = useMemo(() => compileNetwork(calcGraph, catalog), [calcGraph, catalog]);
   // Variables change rarely; one compile cache per variable list.
   const variables = project.manifest.variables;
   const conditions = useMemo(() => new ConditionCompiler(variables), [variables]);
@@ -120,12 +126,16 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
   const overrides = graph.scenario?.values;
   const allOpen = graph.scenario?.allOpen === true;
   const values = useMemo(() => scenarioValues(conditions, variables, overrides), [conditions, variables, overrides]);
-  const gates = useMemo(() => evaluateGates(graph, catalog, conditions, values), [graph, catalog, conditions, values]);
-  const locked = allOpen || gates.lockedCount === 0 ? undefined : gates.locked;
+  const gates = useMemo(() => evaluateGates(calcGraph, catalog, conditions, values), [calcGraph, catalog, conditions, values]);
+  // Same lock state → same array, so a scenario edit that opens nothing keeps the solution.
+  const lockedRef = useRef<Uint8Array | undefined>(undefined);
+  const nextLocked = allOpen || gates.lockedCount === 0 ? undefined : gates.locked;
+  if (!sameBytes(lockedRef.current, nextLocked)) lockedRef.current = nextLocked;
+  const locked = lockedRef.current;
   const result = useMemo(() => solveNetwork(network, mode, { locked }), [network, mode, locked]);
   const nodesById = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph.nodes]);
   const structure = useMemo(() => groupStructure(graph), [graph.groups, graph.nodes]);
-  const collapsed = useMemo(() => summarizeCollapsed(graph, structure, network, result, locked), [graph, structure, network, result, locked]);
+  const collapsed = useMemo(() => summarizeCollapsed(calcGraph, structure, network, result, locked), [calcGraph, structure, network, result, locked]);
 
   // Latest values for callbacks that must stay stable (node components, React Flow handlers).
   const latest = useRef({ project, graph, structure, commit });
@@ -228,7 +238,7 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
   // are merged per item and cannot be selected (expand the group to edit them).
   const rfEdges: Edge[] = useMemo(
     () =>
-      shownEdges(graph, structure, network, result).map((e) => {
+      shownEdges(calcGraph, structure, network, result).map((e) => {
         const single = e.edge >= 0;
         return {
           id: e.id,
@@ -244,7 +254,7 @@ function Editor({ strings, project, graph, newId, commit, simulation }: Producti
           markerEnd: { type: MarkerType.ArrowClosed },
         };
       }),
-    [graph, structure, network, result, unit, s, selectedEdges],
+    [calcGraph, structure, network, result, unit, s, selectedEdges],
   );
 
   // ---- Adding nodes from the library (click: centre of the view; drop: cursor).
@@ -456,4 +466,11 @@ function refreshFrames(nodes: Node[], graph: ProductionGraphAsset, structure: Gr
     return { ...n, position: { x: r.x, y: r.y }, width: r.width, height: r.height };
   });
   return changed ? next : nodes;
+}
+
+function sameBytes(a: Uint8Array | undefined, b: Uint8Array | undefined): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }

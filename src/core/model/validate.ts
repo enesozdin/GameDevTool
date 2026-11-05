@@ -15,7 +15,7 @@ import { KEYWORDS } from "../expr/syntax.ts";
  * Runs after the zod parse, so the project is structurally valid here.
  * Paths are allocated only when an issue is reported, so clean projects stay cheap.
  */
-export function validateProject(project: Project, index: ReferenceIndex = buildReferenceIndex(project)): Issue[] {
+export function validateProject(project: Project, index: ReferenceIndex = buildReferenceIndex(project), cache?: ValidationCache): Issue[] {
   const issues: Issue[] = [];
   const ids = new Set<Id>();
   const claimId = (id: Id, path: () => IssuePath): void => {
@@ -45,22 +45,40 @@ export function validateProject(project: Project, index: ReferenceIndex = buildR
 
   project.manifest.characters.forEach((character, i) => claimId(character.id, () => ["manifest", "characters", i, "id"]));
 
-  // Assets
+  // Assets. The per-asset checks are cached (see checkAsset); ids and localization keys
+  // are collected per asset and checked for duplicates across the project here.
   const locKeys = new Set<string>();
-  const conditions = new ConditionCompiler(project.manifest.variables);
+  let conditions: ConditionCompiler | undefined;
+  const conditionsFor = () => (conditions ??= new ConditionCompiler(project.manifest.variables));
   const assetsById = new Map<Id, Asset>();
   for (const asset of project.assets) assetsById.set(asset.id, asset);
+  const variables = project.manifest.variables;
   project.assets.forEach((asset, assetIndex) => {
     claimId(asset.id, () => ["assets", assetIndex, "id"]);
+    let deps: unknown[];
+    let run: (claim: ClaimId, claimLocKey: ClaimId, out: Issue[]) => void;
     if (asset.kind === "table") {
-      validateTable(asset, assetIndex, claimId, locKeys, issues);
-      if (asset.role !== undefined) validateRole(asset, assetIndex, assetsById, conditions, issues);
+      deps = asset.role === undefined ? [] : [variables, ...referencedTables(asset, assetsById)];
+      run = (claim, claimLocKey, out) => {
+        validateTable(asset, assetIndex, claim, claimLocKey, out);
+        if (asset.role !== undefined) validateRole(asset, assetIndex, assetsById, conditionsFor(), out);
+      };
     } else if (asset.kind === "production-graph") {
-      asset.nodes.forEach((node, i) => claimId(node.id, () => ["assets", assetIndex, "nodes", i, "id"]));
-      asset.edges.forEach((edge, i) => claimId(edge.id, () => ["assets", assetIndex, "edges", i, "id"]));
-      asset.groups?.forEach((group, i) => claimId(group.id, () => ["assets", assetIndex, "groups", i, "id"]));
-      validateProductionGraph(project, asset, assetIndex, assetsById, issues, conditions);
+      const recipes = assetsById.get(asset.recipes);
+      deps = [variables, assetsById.get(asset.items), recipes, ...(recipes?.kind === "table" ? referencedTables(recipes, assetsById) : [])];
+      run = (claim, _claimLocKey, out) => {
+        asset.nodes.forEach((node, i) => claim(node.id, () => ["assets", assetIndex, "nodes", i, "id"]));
+        asset.edges.forEach((edge, i) => claim(edge.id, () => ["assets", assetIndex, "edges", i, "id"]));
+        asset.groups?.forEach((group, i) => claim(group.id, () => ["assets", assetIndex, "groups", i, "id"]));
+        validateProductionGraph(project, asset, assetIndex, assetsById, out, conditionsFor());
+      };
+    } else {
+      return;
     }
+    const check = checkAsset(cache, asset, assetIndex, deps, run);
+    for (const issue of check.issues) issues.push(issue);
+    replayClaims(check.ids, ids, (k) => issues.push({ severity: "error", code: "duplicate-id", path: claimPath(run, "id", k), params: { id: check.ids[k]! } }));
+    replayClaims(check.locKeys, locKeys, (k) => issues.push({ severity: "error", code: "duplicate-loc-key", path: claimPath(run, "loc", k), params: { key: check.locKeys[k]! } }));
   });
 
   checkDocumentCycles(project, issues);
@@ -69,6 +87,85 @@ export function validateProject(project: Project, index: ReferenceIndex = buildR
     issues.push({ severity: "error", code: "broken-reference", path: ref.path, params: { target: ref.target } });
   }
   return issues;
+}
+
+// ---------------------------------------------------------------------------------------
+// Per-asset cache. Edits share structure, so an asset that did not change keeps its object;
+// its checks are reused as long as the assets and variables they read are the same objects.
+// Typing in one table then re-checks that table only, not every cell of the project.
+// ---------------------------------------------------------------------------------------
+
+export interface AssetCheck {
+  readonly deps: readonly unknown[];
+  readonly assetIndex: number;
+  readonly issues: readonly Issue[];
+  /** Ids and localization keys the asset claims, in claim order. */
+  readonly ids: readonly Id[];
+  readonly locKeys: readonly string[];
+}
+
+type AssetRun = (claim: ClaimId, claimLocKey: ClaimId, out: Issue[]) => void;
+
+/**
+ * Opt-in cache for validateProject across edits of one project history. Only valid when
+ * projects are never mutated in place (the editor's history guarantees that).
+ */
+export interface ValidationCache {
+  readonly assets: WeakMap<object, AssetCheck>;
+}
+
+export function createValidationCache(): ValidationCache {
+  return { assets: new WeakMap() };
+}
+
+function checkAsset(cache: ValidationCache | undefined, asset: Asset, assetIndex: number, deps: readonly unknown[], run: AssetRun): AssetCheck {
+  const cached = cache?.assets.get(asset);
+  if (cached !== undefined && cached.deps.length === deps.length && cached.deps.every((d, i) => d === deps[i])) {
+    if (cached.assetIndex === assetIndex) return cached;
+    // The asset moved in the list: same findings, new paths.
+    const moved: AssetCheck = { ...cached, assetIndex, issues: cached.issues.map((issue) => (issue.path[0] === "assets" ? { ...issue, path: ["assets", assetIndex, ...issue.path.slice(2)] } : issue)) };
+    cache!.assets.set(asset, moved);
+    return moved;
+  }
+  const ids: Id[] = [];
+  const locKeys: string[] = [];
+  const issues: Issue[] = [];
+  run((id) => ids.push(id), (key) => locKeys.push(key), issues);
+  const check: AssetCheck = { deps, assetIndex, issues, ids, locKeys };
+  cache?.assets.set(asset, check);
+  return check;
+}
+
+/** Adds claims to the project-wide set; `duplicate(k)` for each claim already taken. */
+function replayClaims(claims: readonly string[], taken: Set<string>, duplicate: (k: number) => void): void {
+  for (let k = 0; k < claims.length; k++) {
+    const key = claims[k]!;
+    if (taken.has(key)) duplicate(k);
+    else taken.add(key);
+  }
+}
+
+/** Path of the k-th claim of a kind. Duplicates are rare, so this re-runs the checks. */
+function claimPath(run: AssetRun, kind: "id" | "loc", k: number): IssuePath {
+  let path: IssuePath = [];
+  let n = 0;
+  const capture: ClaimId = (_key, at) => {
+    if (n++ === k) path = at();
+  };
+  const ignore: ClaimId = () => {};
+  run(kind === "id" ? capture : ignore, kind === "loc" ? capture : ignore, []);
+  return path;
+}
+
+/** Tables the columns of `table` point to (reference, stacks, list of reference). */
+function referencedTables(table: TableAsset, assets: ReadonlyMap<Id, Asset>): (Asset | undefined)[] {
+  const out: (Asset | undefined)[] = [];
+  for (const column of table.columns) {
+    const t = column.type;
+    if (t.kind === "reference" || t.kind === "stacks") out.push(assets.get(t.table));
+    else if (t.kind === "list" && t.item.kind === "reference") out.push(assets.get(t.item.table));
+  }
+  return out;
 }
 
 /** Case-insensitive name set (identifiers are ASCII, so toLowerCase is safe). */
@@ -92,7 +189,7 @@ function checkEnumOptions(options: readonly EnumOption[], path: IssuePath, claim
   });
 }
 
-function validateTable(table: TableAsset, assetIndex: number, claimId: ClaimId, locKeys: Set<string>, issues: Issue[]): void {
+function validateTable(table: TableAsset, assetIndex: number, claimId: ClaimId, claimLocKey: ClaimId, issues: Issue[]): void {
   const base: IssuePath = ["assets", assetIndex];
   const columnIds = new Set<Id>();
   const columnNames = new NameSet();
@@ -133,7 +230,7 @@ function validateTable(table: TableAsset, assetIndex: number, claimId: ClaimId, 
         if (column.required === true) issues.push({ severity: "error", code: "required-missing", path: cellPath(at) });
         continue;
       }
-      checkCell(column.type, value, at, locKeys, issues);
+      checkCell(column.type, value, at, claimLocKey, issues);
 
       const seen = uniqueSeen.get(column.id);
       if (seen !== undefined && (typeof value === "number" || typeof value === "string")) {
@@ -265,18 +362,14 @@ function cellPath(at: CellLocation, ...rest: (string | number)[]): IssuePath {
   return [...at.base, "rows", at.row, "cells", at.column, ...rest];
 }
 
-function checkCell(type: ColumnType, value: Exclude<CellValue, null>, at: CellLocation, locKeys: Set<string>, issues: Issue[]): void {
+function checkCell(type: ColumnType, value: Exclude<CellValue, null>, at: CellLocation, claimLocKey: ClaimId, issues: Issue[]): void {
   switch (type.kind) {
     case "text": {
       if (typeof value !== "object" || Array.isArray(value) || !("source" in value)) {
         issues.push(mismatch(cellPath(at), type.kind));
         return;
       }
-      if (locKeys.has(value.key)) {
-        issues.push({ severity: "error", code: "duplicate-loc-key", path: cellPath(at), params: { key: value.key } });
-      } else {
-        locKeys.add(value.key);
-      }
+      claimLocKey(value.key, () => cellPath(at));
       return;
     }
     case "curve": {

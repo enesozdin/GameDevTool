@@ -5,7 +5,8 @@
  * Each run samples what one period of `seconds` actually yields:
  * - a "poisson" source delivers Poisson(rate × seconds) items;
  * - an output with chance p over c cycles yields Binomial(c, p) × count items, where c is
- *   the cycle count of the deterministic supply-driven solution.
+ *   the cycle count of the deterministic supply-driven solution. When a recipe lists one
+ *   item several times, each stack is sampled with its own chance and the yields add up.
  * The supply-driven solver then turns those effective rates into sink output. Using the
  * deterministic cycle count is an approximation: upstream randomness changes c slightly,
  * which only matters for long chains of chance outputs.
@@ -89,9 +90,15 @@ export function stepMonteCarlo(net: Network, state: MonteCarloState, options: Mo
     for (let u = 0; u < net.nodeCount; u++) {
       const cycles = state.base.activity[u]! * seconds;
       for (let p = net.outStart[u]!; p < net.outStart[u + 1]!; p++) {
-        const chance = net.outChance[p]!;
-        if (chance >= 1 || !(cycles > 0)) continue;
-        outScale[p] = sampleBinomial(state.random, cycles, chance) / (cycles * chance);
+        if (net.outChance[p]! >= 1 || !(cycles > 0)) continue;
+        // Each stack of the port separately: guaranteed parts yield count × cycles, chance
+        // parts count × Binomial(cycles, chance).
+        let sampled = 0;
+        for (let k = net.outPartStart[p]!; k < net.outPartStart[p + 1]!; k++) {
+          const chance = net.outPartChance[k]!;
+          sampled += net.outPartCount[k]! * (chance >= 1 ? cycles : sampleBinomial(state.random, cycles, chance));
+        }
+        outScale[p] = sampled / (cycles * net.outCoef[p]!);
       }
     }
     const result = solveNetwork(net, "supply", { sourceRate, outScale, maxSweeps: 200, locked: options.locked });

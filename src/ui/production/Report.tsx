@@ -35,6 +35,17 @@ export interface ReportProps {
 
 const SIM_RUNS = 2_000;
 const BOM_ROWS = 200;
+/**
+ * Rows per report list. A chain can have thousands of sinks and recipes; the report keeps
+ * its DOM small and shows the largest entries (the full data is in the CSV exports).
+ */
+const REPORT_ROWS = 40;
+
+/** The `limit` entries with the largest `key`, plus how many were left out. */
+function largest<T>(list: readonly T[], key: (t: T) => number, limit = REPORT_ROWS): { shown: T[]; hidden: number } {
+  if (list.length <= limit) return { shown: [...list], hidden: 0 };
+  return { shown: [...list].sort((a, b) => key(b) - key(a)).slice(0, limit), hidden: list.length - limit };
+}
 
 export function Report({ strings, project, graph, catalog, network: net, result, unit, selected, simulation, locked }: ReportProps) {
   const s = strings.production;
@@ -56,7 +67,11 @@ export function Report({ strings, project, graph, catalog, network: net, result,
         outputs.push({ node: u, rate: a });
       }
     }
-    return { raw: [...raw], machines, outputs };
+    return {
+      raw: largest([...raw], (r) => r[1]),
+      machines: largest(machines, (m) => m.count),
+      outputs: largest(outputs, (o) => o.rate),
+    };
   }, [net, result]);
 
   // Bill of materials and time to first unit for the selected recipe's main output.
@@ -81,20 +96,25 @@ export function Report({ strings, project, graph, catalog, network: net, result,
           {s.notConverged}
         </p>
       )}
-      {summary.raw.length === 0 && summary.outputs.every((o) => o.rate === 0) ? (
+      {summary.raw.shown.length === 0 && summary.outputs.shown.every((o) => o.rate === 0) ? (
         <p className="muted small">{s.noFlow}</p>
       ) : (
-        <dl className="facts small">
-          {summary.outputs.map((o) => (
-            <Fact key={`o${o.node}`} term={`${s.targets}: ${title(o.node)}`} value={rate(o.rate)} />
-          ))}
-          {summary.raw.map(([item, r]) => (
-            <Fact key={`r${item}`} term={`${s.rawResources}: ${name(item)}`} value={rate(r)} />
-          ))}
-          {summary.machines.map((m) => (
-            <Fact key={`m${m.node}`} term={`${s.machineCounts}: ${title(m.node)}`} value={`${formatNumber(m.count)} (${Math.ceil(m.count - 1e-9)})`} />
-          ))}
-        </dl>
+        <>
+          <dl className="facts small">
+            {summary.outputs.shown.map((o) => (
+              <Fact key={`o${o.node}`} term={`${s.targets}: ${title(o.node)}`} value={rate(o.rate)} />
+            ))}
+            {summary.raw.shown.map(([item, r]) => (
+              <Fact key={`r${item}`} term={`${s.rawResources}: ${name(item)}`} value={rate(r)} />
+            ))}
+            {summary.machines.shown.map((m) => (
+              <Fact key={`m${m.node}`} term={`${s.machineCounts}: ${title(m.node)}`} value={`${formatNumber(m.count)} (${Math.ceil(m.count - 1e-9)})`} />
+            ))}
+          </dl>
+          {summary.outputs.hidden + summary.raw.hidden + summary.machines.hidden > 0 && (
+            <p className="muted small">{s.reportMoreHidden(summary.outputs.hidden + summary.raw.hidden + summary.machines.hidden)}</p>
+          )}
+        </>
       )}
 
       {plan !== null && focusItem !== undefined && (
@@ -211,7 +231,7 @@ function MonteCarlo({
             </tr>
           </thead>
           <tbody>
-            {outcome.sinks.map((u, i) => {
+            {outcome.sinks.slice(0, REPORT_ROWS).map((u, i) => {
               const p = outcome.percentiles[i]!;
               return (
                 <tr key={u}>
@@ -226,6 +246,7 @@ function MonteCarlo({
           </tbody>
         </table>
       )}
+      {outcome !== null && outcome.sinks.length > REPORT_ROWS && <p className="muted small">{s.reportMoreHidden(outcome.sinks.length - REPORT_ROWS)}</p>}
     </div>
   );
 }

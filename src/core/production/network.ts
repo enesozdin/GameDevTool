@@ -15,7 +15,7 @@
  */
 import type { Id } from "../model/primitives.ts";
 import type { GraphNode, ProductionGraphAsset } from "../model/production-graph.ts";
-import { cycleSeconds, expectedCount, keyAccepts, stackKey, tagOfKey, type Catalog } from "./catalog.ts";
+import { cycleSeconds, keyAccepts, stackKey, tagOfKey, type Catalog } from "./catalog.ts";
 import { adjacency, stronglyConnected } from "./scc.ts";
 
 export const NodeKind = { source: 0, recipe: 1, pass: 2, sink: 3 } as const;
@@ -34,8 +34,19 @@ export interface Network {
   readonly outItem: readonly Id[];
   /** Expected count per unit of activity. */
   readonly outCoef: Float64Array;
-  /** Chance per cycle (1 for guaranteed outputs). */
+  /**
+   * Chance per cycle (1 for guaranteed outputs). For a port merged from several stacks of
+   * one item, the lowest chance of its parts (< 1 means something about it is random).
+   */
   readonly outChance: Float64Array;
+  /**
+   * The stacks behind each output port, for sampling: parts of port p are
+   * outPartStart[p] .. outPartStart[p+1]-1, each `outPartCount` items with `outPartChance`.
+   * Σ count × chance over the parts = outCoef.
+   */
+  readonly outPartStart: Int32Array;
+  readonly outPartCount: Float64Array;
+  readonly outPartChance: Float64Array;
   /** Edges of input port p: inEdgeStart[p] .. inEdgeStart[p+1]-1 into inEdges (edge indices). */
   readonly inEdgeStart: Int32Array;
   readonly inEdges: Int32Array;
@@ -61,38 +72,48 @@ export interface Network {
 }
 
 interface Port {
-  readonly item: Id;
+  readonly item: string;
   readonly coef: number;
   readonly chance: number;
+  /** Stacks merged into this port: [count, chance] pairs. */
+  readonly parts: readonly (readonly [number, number])[];
 }
 
 function portsOf(node: GraphNode, catalog: Catalog): { inputs: Port[]; outputs: Port[]; kind: NodeKindCode } {
   switch (node.type) {
     case "source":
-      return { kind: NodeKind.source, inputs: [], outputs: [{ item: node.item, coef: 1, chance: 1 }] };
+      return { kind: NodeKind.source, inputs: [], outputs: [port(node.item, 1, 1)] };
     case "sink":
-      return { kind: NodeKind.sink, inputs: [{ item: node.item, coef: 1, chance: 1 }], outputs: [] };
+      return { kind: NodeKind.sink, inputs: [port(node.item, 1, 1)], outputs: [] };
     case "recipe": {
       const recipe = catalog.recipes.get(node.recipe);
       if (recipe === undefined) return { kind: NodeKind.recipe, inputs: [], outputs: [] };
       return {
         kind: NodeKind.recipe,
-        inputs: mergePorts(recipe.inputs.map((s) => ({ item: stackKey(s), coef: s.count, chance: 1 }))),
-        outputs: mergePorts(recipe.outputs.map((s) => ({ item: s.item, coef: expectedCount(s), chance: s.chance ?? 1 }))),
+        inputs: mergePorts(recipe.inputs.map((s) => port(stackKey(s), s.count, 1))),
+        outputs: mergePorts(recipe.outputs.map((s) => port(s.item, s.count, s.chance ?? 1))),
       };
     }
     default:
-      return { kind: NodeKind.pass, inputs: [{ item: node.item, coef: 1, chance: 1 }], outputs: [{ item: node.item, coef: 1, chance: 1 }] };
+      return { kind: NodeKind.pass, inputs: [port(node.item, 1, 1)], outputs: [port(node.item, 1, 1)] };
   }
 }
 
-/** The same item twice in one recipe side becomes one port (validation warns about it). */
+/** A port from one stack: `count` items with `chance` per unit of activity. */
+function port(item: string, count: number, chance: number): Port {
+  return { item, coef: count * chance, chance, parts: [[count, chance]] };
+}
+
+/**
+ * The same item twice in one recipe side becomes one port (validation warns about it).
+ * Its parts stay separate, so Monte Carlo samples each stack with its own chance.
+ */
 function mergePorts(ports: Port[]): Port[] {
   if (ports.length < 2) return ports;
-  const byItem = new Map<Id, Port>();
+  const byItem = new Map<string, Port>();
   for (const p of ports) {
     const prev = byItem.get(p.item);
-    byItem.set(p.item, prev === undefined ? p : { item: p.item, coef: prev.coef + p.coef, chance: Math.max(prev.chance, p.chance) });
+    byItem.set(p.item, prev === undefined ? p : { item: p.item, coef: prev.coef + p.coef, chance: Math.min(prev.chance, p.chance), parts: [...prev.parts, ...p.parts] });
   }
   return [...byItem.values()];
 }
@@ -107,6 +128,9 @@ export function compileNetwork(graph: ProductionGraphAsset, catalog: Catalog): N
   const inCoefs: number[] = [];
   const outCoefs: number[] = [];
   const outChances: number[] = [];
+  const partStarts: number[] = [];
+  const partCounts: number[] = [];
+  const partChances: number[] = [];
   const cycleTime = new Float64Array(n).fill(NaN);
   const machineCap = new Float64Array(n).fill(NaN);
   const rate = new Float64Array(n).fill(NaN);
@@ -135,6 +159,11 @@ export function compileNetwork(graph: ProductionGraphAsset, catalog: Catalog): N
       outItem.push(p.item);
       outCoefs.push(p.coef);
       outChances.push(p.chance);
+      partStarts.push(partCounts.length);
+      for (const [count, chance] of p.parts) {
+        partCounts.push(count);
+        partChances.push(chance);
+      }
     }
     if (node.type === "recipe") {
       const recipe = catalog.recipes.get(node.recipe);
@@ -198,6 +227,9 @@ export function compileNetwork(graph: ProductionGraphAsset, catalog: Catalog): N
     outItem,
     outCoef: Float64Array.from(outCoefs),
     outChance: Float64Array.from(outChances),
+    outPartStart: Int32Array.from([...partStarts, partCounts.length]),
+    outPartCount: Float64Array.from(partCounts),
+    outPartChance: Float64Array.from(partChances),
     inEdgeStart,
     inEdges,
     outEdgeStart,
@@ -263,4 +295,29 @@ function orderAndComponents(n: number, source: Int32Array, target: Int32Array): 
   }
   for (let i = 0; i < n; i++) if (placed[i] === 0) result[tail++] = i;
   return { topo: result, component: stronglyConnected(n, outStart, adj).component };
+}
+
+/** Node fields that only affect drawing, never the calculation. */
+const LAYOUT_FIELDS: ReadonlySet<string> = new Set(["position", "label", "group"]);
+
+/**
+ * Whether two versions of a graph calculate the same: equal apart from node positions,
+ * labels and groups (and other drawing-only fields). Lets the editor keep the compiled
+ * network, the solution and running simulations while nodes are moved. O(nodes); edges
+ * are compared by identity, which edits keep when they do not touch connections.
+ */
+export function sameCalculation(a: ProductionGraphAsset, b: ProductionGraphAsset): boolean {
+  if (a === b) return true;
+  if (a.edges !== b.edges || a.items !== b.items || a.recipes !== b.recipes || a.nodes.length !== b.nodes.length) return false;
+  for (let i = 0; i < a.nodes.length; i++) {
+    const x = a.nodes[i]!;
+    const y = b.nodes[i]!;
+    if (x === y) continue;
+    if (x.id !== y.id || x.type !== y.type) return false;
+    const rx = x as unknown as Readonly<Record<string, unknown>>;
+    const ry = y as unknown as Readonly<Record<string, unknown>>;
+    for (const key in rx) if (!LAYOUT_FIELDS.has(key) && rx[key] !== ry[key]) return false;
+    for (const key in ry) if (!LAYOUT_FIELDS.has(key) && !(key in rx) && ry[key] !== undefined) return false;
+  }
+  return true;
 }

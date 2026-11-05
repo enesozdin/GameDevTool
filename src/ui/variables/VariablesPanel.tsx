@@ -102,8 +102,8 @@ function VariableRow({ strings, project, variable: v, newId, commit }: RowProps)
         <div className="field">
           <label htmlFor={`${base}-default`}>{s.defaultValue}</label>
           <select id={`${base}-default`} value={v.default ? "true" : "false"} onChange={(e) => update({ ...v, default: e.target.value === "true" })}>
-            <option value="false">false</option>
-            <option value="true">true</option>
+            <option value="false">{strings.variables.boolValues.false}</option>
+            <option value="true">{strings.variables.boolValues.true}</option>
           </select>
         </div>
       )}

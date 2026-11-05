@@ -43,7 +43,10 @@ export interface RateLine {
   /** Net items/s needed from this item's recipe (or from outside, for raw items). */
   readonly rate: number;
   readonly recipe: CatalogRecipe | undefined;
-  /** Recipe cycles/s and machines needed; 0 for raw items. */
+  /**
+   * Recipe cycles/s and machines needed; 0 for raw items. A recipe chosen for several
+   * items runs once: those lines show the same cycles and machines.
+   */
   readonly cycles: number;
   readonly machines: number;
   /** By-product items/s produced beyond what is needed. */
@@ -79,54 +82,94 @@ export function planRates(choice: RecipeChoice, target: Id, rate: number, maxIte
   const index = new Map<Id, number>();
   items.forEach((id, i) => index.set(id, i));
   const recipeOf = items.map((id) => choice.get(id));
-  // Recipes that run (one per item that has one); `cycles` per item index.
-  const cycles = new Float64Array(items.length);
+
+  // Each recipe runs once, however many of its outputs it was chosen for (a smelter that
+  // makes bars and slag is one machine group, not two). Activity is per recipe.
+  const recipes: CatalogRecipe[] = [];
+  const recipeIndex = new Map<CatalogRecipe, number>();
+  const recipeOfItem = new Int32Array(items.length).fill(-1);
+  recipeOf.forEach((r, i) => {
+    if (r === undefined) return;
+    let k = recipeIndex.get(r);
+    if (k === undefined) {
+      k = recipes.length;
+      recipeIndex.set(r, k);
+      recipes.push(r);
+    }
+    recipeOfItem[i] = k;
+  });
+  /** Expected output of item i per cycle of its own recipe. */
+  const own = new Float64Array(items.length);
+  recipeOf.forEach((r, i) => {
+    if (r !== undefined) own[i] = r.outputs.reduce((sum, s) => (s.item === items[i] ? sum + expectedCount(s) : sum), 0);
+  });
+  // Flattened inputs / outputs per recipe as item indices, so the loop allocates nothing.
+  const inputs = recipes.map((r) => r.inputs.map((s) => [index.get(inputItem(choice, s))!, s.count] as const));
+  const outputs = recipes.map((r) => r.outputs.map((s) => [index.get(s.item)!, expectedCount(s)] as const));
+
+  const cycles = new Float64Array(recipes.length);
   const demand = new Float64Array(items.length);
   const supply = new Float64Array(items.length);
+  const need = new Float64Array(recipes.length);
+  /** Items/s of item i that come from recipes other than its own. */
+  const fromOthers = (i: number) => supply[i]! - (recipeOfItem[i]! >= 0 ? cycles[recipeOfItem[i]!]! * own[i]! : 0);
 
   let converged = false;
   for (let iter = 0; iter < maxIterations && !converged; iter++) {
     demand.fill(0);
     supply.fill(0);
     demand[0] = rate;
+    for (let k = 0; k < recipes.length; k++) {
+      const c = cycles[k]!;
+      if (c === 0) continue;
+      for (const [i, count] of inputs[k]!) demand[i]! += c * count;
+      for (const [i, count] of outputs[k]!) supply[i]! += c * count;
+    }
+    // A recipe runs fast enough for the most demanding of the items it was chosen for.
+    need.fill(0);
     for (let i = 0; i < items.length; i++) {
-      const r = recipeOf[i];
-      if (r === undefined || cycles[i] === 0) continue;
-      for (const s of r.inputs) demand[index.get(inputItem(choice, s))!]! += cycles[i]! * s.count;
-      for (const s of r.outputs) if (s.item !== items[i]) supply[index.get(s.item)!]! += cycles[i]! * expectedCount(s);
+      const k = recipeOfItem[i]!;
+      if (k < 0 || !(own[i]! > 0)) continue;
+      const next = Math.max(0, demand[i]! - fromOthers(i)) / own[i]!;
+      if (!Number.isFinite(next)) return { converged: false, lines: [], raw: new Map() };
+      if (next > need[k]!) need[k] = next;
     }
     let change = 0;
-    for (let i = 0; i < items.length; i++) {
-      const r = recipeOf[i];
-      if (r === undefined) continue;
-      const own = r.outputs.reduce((sum, s) => (s.item === items[i] ? sum + expectedCount(s) : sum), 0);
-      const next = own > 0 ? Math.max(0, demand[i]! - supply[i]!) / own : 0;
-      if (!Number.isFinite(next)) return { converged: false, lines: [], raw: new Map() };
-      change = Math.max(change, Math.abs(next - cycles[i]!) / Math.max(1, next));
-      cycles[i] = next;
+    for (let k = 0; k < recipes.length; k++) {
+      change = Math.max(change, Math.abs(need[k]! - cycles[k]!) / Math.max(1, need[k]!));
+      cycles[k] = need[k]!;
     }
     converged = change <= 1e-12;
+  }
+
+  // Final flows for the settled cycles.
+  demand.fill(0);
+  supply.fill(0);
+  demand[0] = rate;
+  for (let k = 0; k < recipes.length; k++) {
+    for (const [i, count] of inputs[k]!) demand[i]! += cycles[k]! * count;
+    for (const [i, count] of outputs[k]!) supply[i]! += cycles[k]! * count;
   }
 
   const lines: RateLine[] = [];
   const raw = new Map<Id, number>();
   for (let i = 0; i < items.length; i++) {
     const r = recipeOf[i];
-    const net = Math.max(0, demand[i]! - supply[i]!);
+    const k = recipeOfItem[i]!;
     if (r === undefined) {
+      const net = Math.max(0, demand[i]! - supply[i]!);
       if (net > 0) raw.set(items[i]!, net);
       lines.push({ item: items[i]!, rate: net, recipe: undefined, cycles: 0, machines: 0, surplus: Math.max(0, supply[i]! - demand[i]!) });
       continue;
     }
     const time = cycleSeconds(r);
-    const own = r.outputs.reduce((sum, s) => (s.item === items[i] ? sum + expectedCount(s) : sum), 0);
     lines.push({
       item: items[i]!,
-      rate: net,
+      rate: Math.max(0, demand[i]! - fromOthers(i)),
       recipe: r,
-      cycles: cycles[i]!,
-      machines: time === undefined ? NaN : cycles[i]! * time,
-      surplus: Math.max(0, cycles[i]! * own + supply[i]! - demand[i]!),
+      cycles: cycles[k]!,
+      machines: time === undefined ? NaN : cycles[k]! * time,
+      surplus: Math.max(0, supply[i]! - demand[i]!),
     });
   }
   return { converged, lines, raw };
