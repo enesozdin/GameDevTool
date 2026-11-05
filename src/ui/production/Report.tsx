@@ -181,18 +181,31 @@ function MonteCarlo({
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [outcome, setOutcome] = useState<SimulationResult | null>(null);
   const [chartSink, setChartSink] = useState(0);
+  const [interrupted, setInterrupted] = useState(false);
+  // Runs we stopped ourselves (cancel button, edit, restart, unmount): only stops we did
+  // not ask for (tab hidden, worker error) show the notice. A WeakSet, because the
+  // promise of a cancelled run settles after `cancel()` returns.
+  const stoppedByUs = useRef(new WeakSet<SimulationHandle>());
   const handle = useRef<SimulationHandle | null>(null);
   const random = hasRandomness(network);
 
   // Results describe one version of the chain; editing it makes them stale.
+  const stop = () => {
+    const run = handle.current;
+    if (run === null) return;
+    stoppedByUs.current.add(run);
+    run.cancel();
+  };
   useEffect(() => {
     setOutcome(null);
-    handle.current?.cancel();
+    setInterrupted(false);
+    stop();
   }, [network, locked]);
-  useEffect(() => () => handle.current?.cancel(), []);
+  useEffect(() => stop, []);
 
   const start = () => {
-    handle.current?.cancel();
+    stop();
+    setInterrupted(false);
     const tables = project.assets.filter((a) => a.kind === "table" && a.role !== undefined);
     const run = simulation.run({ graph, tables, options: { runs: SIM_RUNS, seconds: 3_600, seed: 1, locked } }, (done, total) => setProgress({ done, total }));
     handle.current = run;
@@ -204,6 +217,8 @@ function MonteCarlo({
       if (r !== null) {
         setOutcome(r);
         setChartSink(0);
+      } else if (!stoppedByUs.current.has(run)) {
+        setInterrupted(true);
       }
     });
   };
@@ -218,13 +233,14 @@ function MonteCarlo({
         ) : (
           <>
             <span role="status">{s.simulating(progress.done, progress.total)}</span>
-            <button type="button" onClick={() => handle.current?.cancel()}>
+            <button type="button" onClick={stop}>
               {s.cancel}
             </button>
           </>
         )}
       </div>
       {!random && <p className="muted small">{s.simNoRandomness}</p>}
+      {interrupted && <p className="field-error" role="status">{s.simInterrupted}</p>}
       {outcome !== null && (
         <table className="ptable small">
           <caption>{s.simResult(outcome.runs)}</caption>

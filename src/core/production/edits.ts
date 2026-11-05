@@ -322,8 +322,9 @@ export function setCalculatorTarget(project: Project, graphId: Id, target: Id | 
   if (rate !== undefined && !(Number.isFinite(rate) && rate >= 0 && rate <= GRAPH_LIMITS.rate)) return null;
   const prev = at.graph.calculator ?? {};
   if (prev.target === target && prev.rate === rate) return null;
-  // Typing a rate is one undo step per target; picking another target is its own step.
-  const coalesce = prev.target === target ? `calculator-rate:${graphId}` : undefined;
+  // Typing a rate is one undo step per target. Picking another target is its own step,
+  // but arrowing through the item list (selection follows focus) merges into one.
+  const coalesce = prev.target === target ? `calculator-rate:${graphId}` : `calculator-pick:${graphId}`;
   return setCalculator(at.index, { ...prev, target, rate }, "edit-calculator", coalesce);
 }
 

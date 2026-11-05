@@ -92,7 +92,8 @@ describe("rate calculator recipe choice", () => {
     const bar = item("IronBar");
 
     const target = setCalculatorTarget(h.project, graph.id, sword, 1 / 60)!;
-    assert.equal(target.coalesceKey, undefined);
+    // Picking a target merges only with other picks (arrowing through the item list).
+    assert.equal(target.coalesceKey, `calculator-pick:${graph.id}`);
     h.apply(target);
     const rate = setCalculatorTarget(h.project, graph.id, sword, 2 / 60)!;
     assert.equal(rate.coalesceKey, `calculator-rate:${graph.id}`);

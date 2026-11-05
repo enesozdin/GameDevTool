@@ -29,7 +29,8 @@ export function VariablesPanel({ strings, project, newId, commit }: VariablesPan
   const s = strings.variables;
   const [query, setQuery] = useState("");
   const all = project.manifest.variables;
-  const q = query.trim().toLowerCase();
+  // The search box only exists for long lists; a leftover query must not filter without it.
+  const q = all.length > MAX_SHOWN ? query.trim().toLowerCase() : "";
   const matching = q === "" ? all : all.filter((v) => v.name.toLowerCase().includes(q));
   const shown = matching.slice(0, MAX_SHOWN);
 
