@@ -98,8 +98,10 @@ Tables export to engine-neutral CSV; see [CSV.md](CSV.md).
 ### Opening
 
 The folder is untrusted input, exactly like a `.gdtproj`. The size, nesting and value
-limits apply to the folder as a whole, measured as if it were one project file. Errors
-name the file they occurred in, so a merge conflict left in a file is easy to find.
+limits apply to the folder as a whole, measured as if it were one project file. The size
+limit (64 MiB) is checked in bytes on disk before any file is read, so non-ASCII text can
+hit it a little earlier than its character count alone would. Errors name the file they
+occurred in, so a merge conflict left in a file is easy to find.
 
 ### Git tips
 

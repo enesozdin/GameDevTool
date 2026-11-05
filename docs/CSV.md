@@ -46,3 +46,19 @@ converter.
   Existing rows that are not in the file are removed (the app asks first; undo works).
 - Cells that cannot be read are reported with their line and column and left empty.
 - Imports are one undo step.
+
+## Spreadsheet-safe text (optional)
+
+Excel and Google Sheets run a cell as a formula when its text starts with `=`, `+`, `-` or
+`@` (or a tab or carriage return). A project from an untrusted source could use that in a
+string or text cell, so the table toolbar has a **Spreadsheet-safe text** switch, off by
+default.
+
+- On export, string and text cells that start like that get a leading `'`, which the
+  spreadsheet shows as plain text. Number columns are not touched: `-5` stays `-5`.
+- A cell that already starts with `'` followed by such a character gets one more `'`, so
+  the round trip is lossless: `=x` ↔ `'=x`, `'=x` ↔ `''=x`.
+- On import with the switch on, exactly one leading `'` is removed again in those cells.
+- It is off by default because engines importing the CSV would see the extra `'`, and
+  text like `+10% speed` is legitimate game data. Turn it on only for files you open in a
+  spreadsheet.
