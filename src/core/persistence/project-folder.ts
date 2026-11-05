@@ -135,8 +135,10 @@ export async function openProjectFolder(io: FolderIo, options: LoadOptions = {})
   } catch {
     return err({ code: "read-failed" });
   }
-  // Bytes >= UTF-16 code units for UTF-8 text, so this never refuses a folder the parser
-  // would accept.
+  // A size limit on disk, checked before any content is read. UTF-8 text has at least as
+  // many bytes as UTF-16 code units, so a folder under the limit always passes the parser's
+  // character limit. Non-ASCII folders over it are refused although their character count
+  // would fit; that is deliberate, the limit is a size.
   if (totalBytes > limits.maxChars) return err({ code: "too-large", limit: limits.maxChars, actual: totalBytes });
 
   let manifestText: string;

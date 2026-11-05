@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   createEmptyProject,
+  createTable,
+  guardFormula,
+  unguardFormula,
   createProductionSample,
   createRandom,
   exportTableCsv,
@@ -156,5 +159,50 @@ describe("random", () => {
       const sd = Math.sqrt(n * p * (1 - p) + 0.25);
       assert.ok(Math.abs(sum / runs - mean) < (5 * sd) / Math.sqrt(runs) + 1e-9, `n=${n} p=${p} mean=${sum / runs}`);
     }
+  });
+});
+
+describe("spreadsheet-safe text", () => {
+  it("guards formula starts and undoes exactly that, for any text", () => {
+    for (const text of ["", "plain", "=1+1", "+10% speed", "-5", "@SUM(A1)", "\tTab", "'quoted", "'=x", "''-y", "a=b", "x'=y"]) {
+      assert.equal(unguardFormula(guardFormula(text)), text, JSON.stringify(text));
+    }
+    assert.equal(guardFormula("=1+1"), "'=1+1");
+    assert.equal(guardFormula("plain"), "plain");
+    // Foreign CSV that already has the apostrophe (typed in Excel) reads back as the text.
+    assert.equal(unguardFormula("'=1+1"), "=1+1");
+  });
+
+  it("exports string and text cells guarded, only when asked, and imports them back", () => {
+    const newId = fixedIds();
+    const project = createEmptyProject("P", newId);
+    const table = createTable(newId, "T");
+    const column = { id: newId(), name: "Note", type: { kind: "string" as const } };
+    const number = { id: newId(), name: "Delta", type: { kind: "float" as const } };
+    table.columns.push(column, number);
+    table.rows.push({ id: newId(), name: "A", cells: { [column.id]: "=HYPERLINK(\"x\")", [number.id]: -5 } });
+    table.rows.push({ id: newId(), name: "B", cells: { [column.id]: "'=odd", [number.id]: 2 } });
+    project.assets.push(table);
+
+    const plain = exportTableCsv(project, table);
+    assert.ok(plain.includes("=HYPERLINK"));
+    // Unguarded: the formula text is written as is, and row B's own `'=odd` is untouched.
+    assert.ok(!plain.includes("''="));
+    assert.ok(plain.includes(",'=odd"));
+
+    const safe = exportTableCsv(project, table, { spreadsheetSafe: true });
+    const parsed = parseCsv(safe);
+    assert.ok(parsed.ok);
+    assert.equal(parsed.value[1]![1], "'=HYPERLINK(\"x\")");
+    assert.equal(parsed.value[2]![1], "''=odd");
+    // Numbers stay numbers: a negative value is not a formula in a number column.
+    assert.equal(parsed.value[1]![2], "-5");
+
+    const back = importTableCsv(project, table, safe, newId, { spreadsheetSafe: true });
+    assert.ok(back.ok);
+    assert.deepEqual(back.value.issues, []);
+    assert.equal(back.value.rows[0]!.cells[column.id], "=HYPERLINK(\"x\")");
+    assert.equal(back.value.rows[1]!.cells[column.id], "'=odd");
+    assert.equal(back.value.rows[0]!.cells[number.id], -5);
   });
 });

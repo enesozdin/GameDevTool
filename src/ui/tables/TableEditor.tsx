@@ -3,6 +3,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   addColumn,
   addRow,
+  buildReferenceIndex,
   CSV_FORMATS,
   exportTableCsv,
   importTableCsv,
@@ -29,6 +30,9 @@ import type { UiStrings } from "../strings.ts";
 import { cellToText, textToCell } from "./cell-text.ts";
 import { NewColumnForm } from "./NewColumnForm.tsx";
 
+/** A text file the user picked, or why it could not be read. */
+export type PickedTextFile = { readonly name: string; readonly text: string } | { readonly name: string; readonly error: "too-large" | "read-failed" };
+
 export interface TableEditorProps {
   readonly strings: UiStrings;
   readonly project: Project;
@@ -38,7 +42,7 @@ export interface TableEditorProps {
   /** Saves a file (download); provided by the app. */
   readonly saveFile: (name: string, text: string, type: string) => void;
   /** Lets the user pick a text file; provided by the app. */
-  readonly pickTextFile: (accept: string) => Promise<{ name: string; text: string } | null>;
+  readonly pickTextFile: (accept: string) => Promise<PickedTextFile | null>;
   readonly notify: (text: string, kind: "info" | "error") => void;
 }
 
@@ -56,6 +60,7 @@ export function TableEditor({ strings, project, table, newId, commit, saveFile, 
   const s = strings.tables;
   const scrollRef = useRef<HTMLDivElement>(null);
   const [format, setFormat] = useState<CsvFormatId>("generic");
+  const [spreadsheetSafe, setSpreadsheetSafe] = useState(false);
   const names = useMemo(() => rowNames(project), [project]);
 
   const virtualizer = useVirtualizer({
@@ -73,15 +78,19 @@ export function TableEditor({ strings, project, table, newId, commit, saveFile, 
   };
 
   const onExport = () => {
-    const csv = exportTableCsv(project, table, { format: CSV_FORMATS[format] });
+    const csv = exportTableCsv(project, table, { format: CSV_FORMATS[format], spreadsheetSafe });
     saveFile(`${table.name.replace(/[^A-Za-z0-9_-]+/g, "_") || "table"}.csv`, csv, "text/csv");
   };
 
   const onImport = async () => {
     const file = await pickTextFile(".csv,.tsv,text/csv,text/tab-separated-values");
     if (file === null) return;
+    if ("error" in file) {
+      notify(s.importFailed(strings.loadErrors[file.error] ?? file.error), "error");
+      return;
+    }
     const delimiter = file.name.toLowerCase().endsWith(".tsv") ? "\t" : ",";
-    const result = importTableCsv(project, table, file.text, newId, { format: CSV_FORMATS[format], delimiter });
+    const result = importTableCsv(project, table, file.text, newId, { format: CSV_FORMATS[format], delimiter, spreadsheetSafe });
     if (!result.ok) {
       notify(s.importFailed(strings.loadErrors[result.error.code] ?? result.error.code), "error");
       return;
@@ -108,6 +117,10 @@ export function TableEditor({ strings, project, table, newId, commit, saveFile, 
             </option>
           ))}
         </select>
+        <label className="check" title={s.spreadsheetSafeHint}>
+          <input type="checkbox" checked={spreadsheetSafe} onChange={(e) => setSpreadsheetSafe(e.target.checked)} />
+          {s.spreadsheetSafe}
+        </label>
         <button type="button" onClick={() => void onImport()}>
           {s.importCsv}
         </button>
@@ -177,6 +190,12 @@ interface GridRowProps {
 
 const GridRow = memo(function GridRow({ strings, project, table, row, index, top, names, newId, commit }: GridRowProps) {
   const s = strings.tables;
+  // Other assets that use this row (recipes, graphs, references) would be left broken.
+  const onDelete = () => {
+    const used = buildReferenceIndex(project).usedBy(row.id).filter((r) => r.source !== table.id).length;
+    if (used > 0 && !window.confirm(s.confirmDeleteRow(row.name, used))) return;
+    commit(removeRows(project, table.id, new Set([row.id])));
+  };
   return (
     <div role="row" aria-rowindex={index + 2} className="tgrid-row" style={{ transform: `translateY(${top}px)`, height: ROW_HEIGHT }}>
       <div role="gridcell" className="tcell tcell-name">
@@ -188,7 +207,7 @@ const GridRow = memo(function GridRow({ strings, project, table, row, index, top
         </div>
       ))}
       <div role="gridcell" className="tcell tcell-action">
-        <button type="button" className="icon" aria-label={s.deleteRow(row.name)} onClick={() => commit(removeRows(project, table.id, new Set([row.id])))}>
+        <button type="button" className="icon" aria-label={s.deleteRow(row.name)} onClick={onDelete}>
           ×
         </button>
       </div>

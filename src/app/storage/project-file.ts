@@ -13,8 +13,11 @@ export interface OpenedFile {
 }
 
 /**
- * Bytes >= UTF-16 code units for any UTF-8 text, so rejecting files above the char limit
- * before reading never refuses a file that would pass the parser's own check.
+ * A byte limit, checked before the file is read so an oversized file never fills memory.
+ * UTF-8 text has at least as many bytes as UTF-16 code units, so a file under this limit
+ * always passes the parser's character limit. The reverse does not hold: non-ASCII text
+ * over the limit is refused although its character count would fit. That is deliberate,
+ * the limit is a file size.
  */
 const MAX_FILE_BYTES = DEFAULT_JSON_LIMITS.maxChars;
 

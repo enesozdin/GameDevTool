@@ -392,6 +392,7 @@ export const en = {
     targets: "Output",
     noFlow: "Nothing flows yet. Connect a source to a recipe and a sink.",
     bom: (item: string) => `Bill of materials for 1 ${item}`,
+    bomTruncated: (rows: number) => `Only the first ${rows} items are listed; the chain is larger.`,
     firstUnit: (seconds: string) => `Time to first unit: ${seconds} s`,
     cycle: "(loop)",
     simulate: "Simulate",
@@ -450,6 +451,9 @@ export const en = {
     listHint: "Comma-separated",
     imported: (rows: number, removed: number, problems: number) =>
       `Imported ${rows} ${rows === 1 ? "row" : "rows"}${removed > 0 ? `, removed ${removed}` : ""}${problems > 0 ? `; ${problems} ${problems === 1 ? "cell" : "cells"} could not be read` : ""}.`,
+    spreadsheetSafe: "Spreadsheet-safe text",
+    spreadsheetSafeHint: "Marks text that starts with = + - or @ with a leading ' so Excel and Sheets do not run it as a formula. Leave off for engine import.",
+    confirmDeleteRow: (name: string, used: number) => `${name} is used in ${used} ${used === 1 ? "place" : "places"}. Deleting it breaks ${used === 1 ? "that reference" : "those references"}. You can undo this. Delete anyway?`,
     importFailed: (reason: string) => `Could not import the CSV (${reason}).`,
     confirmImport: (removed: number) => `${removed} ${removed === 1 ? "row is" : "rows are"} not in the CSV and will be removed. You can undo this. Continue?`,
     kinds: {

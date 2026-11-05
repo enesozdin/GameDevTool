@@ -26,8 +26,30 @@ import { GENERIC_CSV, type CsvFormat, type CsvStructured } from "./csv-formats.t
 
 export interface TableCsvOptions {
   readonly format?: CsvFormat;
+  /**
+   * Spreadsheet-safe text: string and text cells that start with = + - @ (or a tab or CR)
+   * get a leading ' on export, so Excel and Sheets show them as text instead of running
+   * them as formulas. Import removes the ' again. Off by default, because engines importing
+   * the CSV would see the extra ' (a description like "+10% speed" is legitimate data).
+   */
+  readonly spreadsheetSafe?: boolean;
   /** "," for CSV, "\t" for TSV (spreadsheet copy/paste). */
   readonly delimiter?: string;
+}
+
+/**
+ * Text that a spreadsheet reads as a formula: it starts with = + - @ (or a tab or CR),
+ * possibly after apostrophes. The apostrophes matter for a lossless round trip: the text
+ * `'=x` is guarded as `''=x`, and import removes exactly one apostrophe.
+ */
+const GUARDED_START = /^'*[=+\-@\t\r]/;
+
+export function guardFormula(text: string): string {
+  return GUARDED_START.test(text) ? `'${text}` : text;
+}
+
+export function unguardFormula(text: string): string {
+  return /^'+[=+\-@\t\r]/.test(text) ? text.slice(1) : text;
 }
 
 /** Row names of every table, for writing and reading references. */
@@ -69,7 +91,13 @@ export function exportTableCsv(project: Project, table: TableAsset, options: Tab
   const names = rowNames(project);
   const rows: string[][] = [[format.rowNameHeader, ...table.columns.map((c) => c.name)]];
   for (const row of table.rows) {
-    rows.push([row.name, ...table.columns.map((c) => formatCell(c.type, row.cells[c.id], names, table.name, format))]);
+    rows.push([
+      row.name,
+      ...table.columns.map((c) => {
+        const text = formatCell(c.type, row.cells[c.id], names, table.name, format);
+        return options.spreadsheetSafe === true && (c.type.kind === "string" || c.type.kind === "text") ? guardFormula(text) : text;
+      }),
+    ]);
   }
   return writeCsv(rows, options.delimiter ?? ",");
 }
@@ -196,7 +224,8 @@ export function importTableCsv(project: Project, table: TableAsset, text: string
     }
     mapping.forEach((column, i) => {
       if (column === undefined) return;
-      const raw = record[i] ?? "";
+      let raw = record[i] ?? "";
+      if (options.spreadsheetSafe === true && (column.type.kind === "string" || column.type.kind === "text")) raw = unguardFormula(raw);
       if (raw.trim() === "") return;
       const value = parseCell(column.type, raw, names, format, previous?.cells[column.id], newId);
       if (value === undefined) issues.push({ code: "invalid-value", line, column: column.name, value: raw });

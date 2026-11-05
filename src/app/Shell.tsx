@@ -473,6 +473,7 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
               getKey={(a) => a.id}
               selectedKey={selected ? selected.id : null}
               onSelect={setSelectedId}
+              selectOnMove={false}
               renderItem={(a) => (
                 <>
                   <span className="asset-kind">{strings.assets.kind[a.kind]}</span>

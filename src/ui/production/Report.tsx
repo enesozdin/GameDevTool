@@ -126,6 +126,7 @@ export function Report({ strings, project, graph, catalog, network: net, result,
           <ul className="bom">
             <BomTree node={plan.bom.root} name={name} cycle={s.cycle} />
           </ul>
+          {plan.bom.truncated && <p className="muted small">{s.bomTruncated(BOM_ROWS)}</p>}
           <p className="muted small">{s.firstUnit(formatNumber(plan.first.seconds))}</p>
         </>
       )}
