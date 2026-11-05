@@ -67,6 +67,13 @@ export const en = {
       `Delete "${name}"? ${count} ${count === 1 ? "reference" : "references"} to it will break. You can undo this.`,
   },
 
+  crash: {
+    title: "Something went wrong",
+    body: "The app hit an unexpected error and stopped to protect your data. Unsaved changes are kept in the recovery cache; reload to restore them.",
+    reload: "Reload",
+    details: "Error details",
+  },
+
   recovery: {
     found: (name: string, when: string) => `Unsaved changes to "${name}" from ${when} were found.`,
     restore: "Restore",

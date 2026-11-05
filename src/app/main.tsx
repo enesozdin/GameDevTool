@@ -4,6 +4,7 @@ import * as z from "zod/mini";
 import { createEmptyProject, createIdGenerator } from "../core/index.ts";
 import { en } from "../ui/strings.ts";
 import "../ui/styles.css";
+import { ErrorBoundary } from "./ErrorBoundary.tsx";
 import { Shell } from "./Shell.tsx";
 
 // Zod's JIT probes `new Function`; the CSP has no 'unsafe-eval', so the probe would only
@@ -22,6 +23,8 @@ if (container === null) throw new Error("#root missing");
 
 createRoot(container).render(
   <StrictMode>
-    <Shell strings={en} version={__APP_VERSION__} newId={newId} initialProject={createEmptyProject(en.untitledProject, newId)} />
+    <ErrorBoundary strings={en}>
+      <Shell strings={en} version={__APP_VERSION__} newId={newId} initialProject={createEmptyProject(en.untitledProject, newId)} />
+    </ErrorBoundary>
   </StrictMode>,
 );

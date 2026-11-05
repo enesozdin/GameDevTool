@@ -899,3 +899,15 @@ label.check {
   align-items: center;
   min-height: 32px;
 }
+
+.crash {
+  max-width: 40rem;
+  margin: 10vh auto;
+  padding: 0 16px;
+}
+
+.crash pre {
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

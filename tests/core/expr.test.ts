@@ -21,6 +21,8 @@ import {
   updateVariable,
   withEnumOptions,
   validateProject,
+  loadProject,
+  saveProject,
   type Value,
   type Variable,
 } from "../../src/core/index.ts";
@@ -119,9 +121,23 @@ describe("expression language", () => {
       assert.deepEqual([e.code, e.start, e.end], [code, start, end], source);
     }
     assert.equal(errorOf("x".repeat(10_001)).code, "expr-too-long");
-    assert.equal(errorOf("(".repeat(100) + "1" + ")".repeat(100)).code, "expr-too-deep");
-    assert.equal(errorOf("-".repeat(100) + "1").code, "expr-too-deep");
-    assert.ok(compileExpression("(".repeat(60) + "1" + ")".repeat(60), scope).ok);
+    assert.equal(errorOf("(".repeat(300) + "1" + ")".repeat(300)).code, "expr-too-deep");
+    assert.equal(errorOf("-".repeat(300) + "1").code, "expr-too-deep");
+    assert.ok(compileExpression("(".repeat(200) + "1" + ")".repeat(200), scope).ok);
+  });
+
+  it("limits flat operator chains instead of overflowing the stack", () => {
+    // 8 003 characters, under the length limit: one level per operator.
+    for (const op of ["+", "*", "-"]) assert.equal(errorOf("1" + `${op}1`.repeat(4000) + " > 0").code, "expr-too-deep", op);
+    assert.equal(errorOf("true" + " or true".repeat(1200)).code, "expr-too-deep");
+    assert.equal(errorOf("true" + " and true".repeat(1000)).code, "expr-too-deep");
+    // Long but legal chains still work and evaluate.
+    const sum = compileExpression("1" + "+1".repeat(200), scope);
+    assert.ok(sum.ok);
+    const value = sum.value.evaluate([]);
+    assert.ok(value.ok && value.value === 201);
+    // Depth is per chain, not per operand: siblings do not add up.
+    assert.ok(compileExpression(Array.from({ length: 30 }, () => "(" + "1" + "+1".repeat(150) + ")").join(" + ") + " > 0", scope).ok);
   });
 
   it("reports names, functions and types", () => {
@@ -197,6 +213,21 @@ describe("expression validation", () => {
     project.manifest.variables.push({ id: id(), name: "Or", type: "bool", default: false });
     const issues = validateProject(project);
     assert.ok(issues.some((i) => i.code === "reserved-name"));
+  });
+
+  it("loads a file with hostile conditions without throwing", () => {
+    const newId = fixedIds();
+    const project = createEmptyProject("P", newId);
+    const { tables, graph } = createProductionSample(newId, { items: "I", machines: "M", recipes: "R", graph: "G" });
+    const flat = "1" + "+1".repeat(4000) + " > 0";
+    const gateCol = (tables.recipes.role as { gate: string }).gate;
+    tables.recipes.rows[0]!.cells[gateCol] = flat;
+    graph.nodes.push({ id: newId(), type: "gate", position: { x: 0, y: 0 }, item: tables.items.rows[0]!.id, condition: flat });
+    project.assets.push(tables.items, tables.machines, tables.recipes, graph);
+    const loaded = loadProject(saveProject(project));
+    assert.ok(loaded.ok);
+    const deep = validateProject(loaded.value.project).filter((i) => i.code === "expr-too-deep");
+    assert.equal(deep.length, 2);
   });
 });
 

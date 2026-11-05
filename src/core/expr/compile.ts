@@ -6,8 +6,8 @@ import type { Result } from "../result.ts";
 import { err, ok } from "../result.ts";
 import type { EnumOption, Id } from "../model/primitives.ts";
 import type { Variable } from "../model/project.ts";
-import { parseExpression } from "./parser.ts";
-import { ExprException, fail, KEYWORDS, type BinaryOp, type Expr, type ExprError, type Span } from "./syntax.ts";
+import { caught, parseExpression } from "./parser.ts";
+import { fail, KEYWORDS, type BinaryOp, type Expr, type ExprError, type Span } from "./syntax.ts";
 
 /** Run-time value. Enum values are option ids (strings). */
 export type Value = number | boolean | string;
@@ -327,8 +327,7 @@ export function compileExpression(source: string, scope: Scope, options: Compile
   try {
     typed = compiler.compile(ast);
   } catch (e) {
-    if (e instanceof ExprException) return err(e.error);
-    throw e;
+    return err(caught(e, ast.span));
   }
   if (options.expect !== undefined && typed.type.kind !== options.expect) {
     return err({ code: "expr-type", start: ast.span.start, end: ast.span.end, params: { expected: options.expect, found: typeLabel(typed.type) } });
@@ -343,8 +342,7 @@ export function compileExpression(source: string, scope: Scope, options: Compile
       try {
         return ok(fn(values));
       } catch (e) {
-        if (e instanceof ExprException) return err(e.error);
-        throw e;
+        return err(caught(e, ast.span));
       }
     },
   });

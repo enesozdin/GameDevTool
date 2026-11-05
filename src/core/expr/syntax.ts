@@ -8,8 +8,11 @@
 export const EXPR_LIMITS = {
   /** Characters of source text. */
   length: 10_000,
-  /** Nesting depth of the syntax tree (parentheses, operators, calls). */
-  depth: 64,
+  /**
+   * Nesting depth of the syntax tree: parentheses, unary operators, calls, and every binary
+   * operator of a chain (`a + b + c` is two levels). Keeps recursion far from stack limits.
+   */
+  depth: 256,
   /** Arguments per function call. */
   args: 64,
 } as const;

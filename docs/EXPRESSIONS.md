@@ -94,7 +94,7 @@ character range, which the editor underlines and the validation list shows.
 |---|---|
 | `expr-empty` | No expression. |
 | `expr-too-long` | More than 10 000 characters. |
-| `expr-too-deep` | Nested more than 64 levels (parentheses, operators, calls). |
+| `expr-too-deep` | Nested more than 256 levels. Parentheses, `not`, unary minus and calls count one level each, and so does every binary operator in a chain: `a + b + c` is two levels. |
 | `expr-unexpected-char` | A character that is not part of the language, e.g. `$`. |
 | `expr-unterminated-string`, `expr-bad-escape` | Broken text literal. |
 | `expr-bad-number` | Malformed number, e.g. `1.2.3`, `2x`, `1e`. |

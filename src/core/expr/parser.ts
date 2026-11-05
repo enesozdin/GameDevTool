@@ -169,21 +169,30 @@ class Parser {
     return { kind: "binary", op, left, right, span: { start: left.span.start, end: right.span.end } };
   }
 
+  /**
+   * Operator chains build left-deep trees: `a + b + c` is `(a + b) + c`. Every operator in a
+   * chain is one more level for the compiler and the evaluator, which recurse per level, so
+   * each one counts toward EXPR_LIMITS.depth like a pair of parentheses.
+   */
   private or(): Expr {
+    const depth = this.depth;
     let left = this.and();
     while (this.isOp("or")) {
-      this.next();
+      this.enter(this.next());
       left = this.binary("or", left, this.and());
     }
+    this.depth = depth;
     return left;
   }
 
   private and(): Expr {
+    const depth = this.depth;
     let left = this.not();
     while (this.isOp("and")) {
-      this.next();
+      this.enter(this.next());
       left = this.binary("and", left, this.not());
     }
+    this.depth = depth;
     return left;
   }
 
@@ -208,23 +217,29 @@ class Parser {
   }
 
   private additive(): Expr {
+    const depth = this.depth;
     let left = this.multiplicative();
     for (;;) {
       const t = this.peek();
-      if (t.kind !== "op" || (t.text !== "+" && t.text !== "-")) return left;
-      this.next();
+      if (t.kind !== "op" || (t.text !== "+" && t.text !== "-")) break;
+      this.enter(this.next());
       left = this.binary(t.text, left, this.multiplicative());
     }
+    this.depth = depth;
+    return left;
   }
 
   private multiplicative(): Expr {
+    const depth = this.depth;
     let left = this.negation();
     for (;;) {
       const t = this.peek();
-      if (t.kind !== "op" || (t.text !== "*" && t.text !== "/" && t.text !== "%")) return left;
-      this.next();
+      if (t.kind !== "op" || (t.text !== "*" && t.text !== "/" && t.text !== "%")) break;
+      this.enter(this.next());
       left = this.binary(t.text, left, this.negation());
     }
+    this.depth = depth;
+    return left;
   }
 
   private negation(): Expr {
@@ -302,7 +317,17 @@ export function parseExpression(source: string): Result<Expr, ExprError> {
     if (tokens.length === 1) return err({ code: "expr-empty", start: 0, end: source.length });
     return ok(new Parser(tokens).parse());
   } catch (e) {
-    if (e instanceof ExprException) return err(e.error);
-    throw e;
+    return err(caught(e, { start: 0, end: source.length }));
   }
+}
+
+/**
+ * Turns an exception from parsing, compiling or evaluating into an error. A stack overflow
+ * cannot happen within EXPR_LIMITS; it is still reported as too deep instead of escaping,
+ * so untrusted project files can never crash loading.
+ */
+export function caught(e: unknown, span: Span): ExprError {
+  if (e instanceof ExprException) return e.error;
+  if (e instanceof RangeError) return { code: "expr-too-deep", start: span.start, end: span.end, params: { limit: EXPR_LIMITS.depth } };
+  throw e;
 }
