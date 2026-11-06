@@ -217,8 +217,9 @@ describe("table grid: paste", () => {
 });
 
 describe("table grid: fill, clear, Yes/No", () => {
-  it("fills the top row down, with new localization keys, and keeps row names", () => {
+  it("fills the top row down, keeping each target's localization key, and keeps row names", () => {
     const { project, newId, stats: t, col } = sample();
+    t.rows[1]!.cells[col.name] = { key: "k.bat", source: "Bat" };
     const res = fillDown(project, t.id, all(t), newId);
     assert.ok(res.ok);
     const after = apply(project, res.value);
@@ -227,7 +228,9 @@ describe("table grid: fill, clear, Yes/No", () => {
     assert.deepEqual(rows.map((r) => r.cells[col.hp]), [10, 10, 10]);
     assert.deepEqual(rows.map((r) => r.cells[col.flying]), [false, false, false]);
     const keys = rows.map((r) => (r.cells[col.name] as { key: string }).key);
+    assert.equal(keys[1], "k.bat"); // translations of Bat's title stay linked
     assert.equal(new Set(keys).size, 3);
+    assert.deepEqual(rows.map((r) => (r.cells[col.name] as { source: string }).source), ["Goblin", "Goblin", "Goblin"]);
     assert.deepEqual(validateProject(after), []);
   });
 

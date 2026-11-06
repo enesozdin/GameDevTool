@@ -285,8 +285,9 @@ export function setBoolRange(project: Project, tableId: Id, range: GridRange, va
 
 /**
  * Copies the top row of the range into the rows below it (Ctrl+D). A one-row range copies
- * from the row above. Row names are not filled (they must stay unique); localizable text
- * gets a new localization key per copy.
+ * from the row above. Row names are not filled (they must stay unique). Localizable text
+ * keeps each target cell's own localization key (so its translations stay linked); empty
+ * targets get a new key.
  */
 export function fillDown(project: Project, tableId: Id, range: GridRange, newId: IdGenerator): Result<Change | null, GridWriteError> {
   const ai = tableIndex(project, tableId);
@@ -297,8 +298,11 @@ export function fillDown(project: Project, tableId: Id, range: GridRange, newId:
   const source = table.rows[sourceIndex];
   if (source === undefined) return ok(null);
   const target = { ...range, top: oneRow ? range.top : range.top + 1 };
-  return writeRange(project, tableId, target, "fill-down", isTextEditable, (_row, column) => {
+  return writeRange(project, tableId, target, "fill-down", isTextEditable, (row, column) => {
     const v = source.cells[column.id];
-    return v !== null && typeof v === "object" && !Array.isArray(v) && "key" in v ? { ...v, key: newId() } : v;
+    if (v === null || typeof v !== "object" || Array.isArray(v) || !("key" in v)) return v;
+    const own = row.cells[column.id];
+    const key = own !== null && typeof own === "object" && !Array.isArray(own) && "key" in own ? own.key : newId();
+    return { ...v, key };
   });
 }

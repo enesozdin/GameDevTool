@@ -335,10 +335,10 @@ ready after ~64 days.
 
 | Part | Status |
 |---|---|
-| Spreadsheet grid: rows and columns virtualized, sticky row names, one editor in the active cell | ✅ |
+| Spreadsheet grid: rows and columns virtualized, sticky row names, one editor in the active cell, 44 px rows on touch | ✅ |
 | Keyboard navigation (arrows, Ctrl+arrows, Home/End, PageUp/PageDown), range selection (Shift, mouse drag), Enter/F2/typing edits | ✅ |
 | Copy/paste with Excel / Google Sheets (TSV): one value fills the selection, blocks repeat over it, rows past the end are appended; invalid fields are counted and left unchanged | ✅ |
-| Fill-down (Ctrl+D), bulk edit of selected cells (Ctrl+Enter), clear (Delete), Yes/No toggle (Space), delete selected rows; each one undo step | ✅ |
+| Fill-down (Ctrl+D; localizable text keeps each cell's key), bulk edit of selected cells (Ctrl+Enter), clear (Delete), Yes/No toggle (Space), delete selected rows; each one undo step | ✅ |
 | Per-column validation: min/max, required, unique, pattern; editing column constraints in the UI | |
 | Formulas: column-level and cross-table lookups, dependency graph | |
 | Curve editor with presets | |

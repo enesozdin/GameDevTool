@@ -72,7 +72,9 @@ export interface TableEditorProps {
   readonly notify: (text: string, kind: "info" | "error") => void;
 }
 
-const ROW_HEIGHT = 40;
+/** Touch layouts get 44 px rows (minimum touch target). Read once; sizes stay fixed. */
+const COARSE_POINTER = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+const ROW_HEIGHT = COARSE_POINTER ? 44 : 40;
 const NAME_WIDTH = 200;
 const COLUMN_WIDTH = 180;
 const ACTION_WIDTH = 48;
