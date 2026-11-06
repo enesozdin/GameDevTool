@@ -17,11 +17,3 @@ export function formatRate(perSecond: number, unit: RateUnit, suffix: Readonly<R
   return `${formatNumber(perSecond * UNIT_SECONDS[unit])} ${suffix[unit] ?? ""}`;
 }
 
-/** Parses a user-typed number; empty → null, invalid → undefined. */
-export function parseNumberInput(text: string): number | null | undefined {
-  const t = text.trim().replace(",", ".");
-  if (t === "") return null;
-  if (!/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(t)) return undefined;
-  const n = Number(t);
-  return Number.isFinite(n) ? n : undefined;
-}

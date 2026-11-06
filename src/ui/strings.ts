@@ -438,6 +438,33 @@ export const en = {
     columnType: "Type",
     rowName: "Name",
     deleteRow: (name: string) => `Delete row ${name}`,
+    deleteRows: (n: number) => (n > 1 ? `Delete ${n} rows` : "Delete row"),
+    confirmDeleteRows: (rows: number, used: number) =>
+      `These ${rows} rows are used in ${used} ${used === 1 ? "place" : "places"}. Deleting them breaks ${used === 1 ? "that reference" : "those references"}. You can undo this. Delete anyway?`,
+    fillDown: "Fill down",
+    fillDownHint: "Copies the first selected row into the selected rows below it (Ctrl+D)",
+    gridHelp:
+      "Arrow keys move, Shift extends the selection. Enter, F2 or typing edits a cell; Ctrl+Enter writes to every selected cell. Delete clears, Space toggles yes/no, Ctrl+C, Ctrl+X and Ctrl+V copy and paste with spreadsheets, Ctrl+D fills down.",
+    yes: "Yes",
+    no: "No",
+    invalidCell: (column: string) => `Not a valid value for ${column}; the cell was not changed.`,
+    bulkInvalid: (n: number) => `${n} selected ${n === 1 ? "cell" : "cells"} could not take this value and ${n === 1 ? "was" : "were"} left unchanged.`,
+    pasted: (added: number, invalid: number, dropped: number) =>
+      [
+        added > 0 ? `Added ${added} ${added === 1 ? "row" : "rows"}.` : "",
+        invalid > 0 ? `${invalid} ${invalid === 1 ? "cell" : "cells"} could not be read and ${invalid === 1 ? "was" : "were"} left unchanged.` : "",
+        dropped > 0 ? `${dropped} ${dropped === 1 ? "cell" : "cells"} did not fit the table (or were curves) and ${dropped === 1 ? "was" : "were"} skipped.` : "",
+      ]
+        .filter((t) => t !== "")
+        .join(" "),
+    pasteFailed: (reason: string) => `Could not paste (${reason}).`,
+    pasteErrors: {
+      "too-large": "the clipboard text is too large",
+      "too-many-cells": "too many cells at once",
+      "unclosed-quote": "a quoted cell is not closed",
+      "table-missing": "the table no longer exists",
+    } as Record<string, string>,
+    copyTooLarge: "The selection is too large to copy.",
     deleteColumn: (name: string) => `Delete column ${name}`,
     builtIn: "Built-in column",
     importCsv: "Import CSV…",
@@ -445,7 +472,7 @@ export const en = {
     format: "CSV format",
     formats: { generic: "Generic (JSON cells)", unreal: "Unreal DataTable" } as Record<string, string>,
     rowsCount: (n: number) => `${n} ${n === 1 ? "row" : "rows"}`,
-    empty: "No rows yet.",
+    empty: "No rows yet. Add a row, or click here and paste cells from a spreadsheet (first column: row names).",
     invalidValue: "Invalid value",
     curveSummary: (n: number) => `${n} keys`,
     stacksHint: "e.g. IronOre*2, Slag*1@0.1, #Fuel*1 (any item tagged Fuel)",

@@ -280,6 +280,8 @@ input[aria-invalid="true"] {
 
 .details {
   display: grid;
+  /* minmax(0, …): wide content (a table grid) scrolls inside, not the whole panel. */
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: var(--gap);
   min-height: 0;
@@ -938,6 +940,7 @@ button.icon {
 }
 
 .tgrid {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
@@ -946,10 +949,29 @@ button.icon {
   background: var(--surface);
 }
 
+.tgrid:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Receives the browser's copy/paste events for the grid; invisible but focusable. */
+.tgrid-clip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  resize: none;
+  pointer-events: none;
+}
+
 .tgrid-head {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 2;
   display: flex;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -970,17 +992,60 @@ button.icon {
   align-items: center;
   gap: 4px;
   width: 180px;
-  padding: 2px 4px;
+  min-width: 0;
+  padding: 2px 6px;
   border-right: 1px solid var(--border);
+  background: var(--surface);
+  cursor: cell;
+  user-select: none;
 }
 
+.tgrid-head .tcell {
+  cursor: default;
+}
+
+.tcell.sel {
+  background: var(--selected);
+}
+
+.tcell.active {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Row names stay visible while scrolling sideways. */
 .tcell-name {
+  position: sticky;
+  left: 0;
+  z-index: 1;
   width: 200px;
+  font-weight: 500;
 }
 
 .tcell-action {
   width: 48px;
   border-right: 0;
+  cursor: default;
+}
+
+.tspacer {
+  flex: none;
+}
+
+.tspacer-fill {
+  flex: 1 0 0;
+}
+
+.tcell-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tbool {
+  font-size: 1.125rem;
+  line-height: 1;
+  cursor: pointer;
 }
 
 .tcell input[type="text"],

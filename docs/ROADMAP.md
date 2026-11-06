@@ -331,6 +331,18 @@ ready after ~64 days.
 | Creating enum / reference / list / stacks / localizable text columns from the UI (enum options, target table, list item type) | ✅ |
 | Monte Carlo histograms (uPlot): binned in the worker, one chart for the chosen sink, P10/P50/P90 lines, light/dark | ✅ |
 
+### Phase 2 progress
+
+| Part | Status |
+|---|---|
+| Spreadsheet grid: cell selection (click, Shift, drag), keyboard navigation, edit by typing / Enter / F2 / double-click (tap on touch), rows and columns virtualized, sticky row names | ✅ |
+| Copy / cut / paste with Excel and Google Sheets (TSV in the in-app cell syntax); pasting past the last row appends rows; one value fills a whole selection | ✅ |
+| Fill down (Ctrl+D), clear (Delete), bulk edit of selected cells (Ctrl+Enter), toggle yes/no cells (Space), delete selected rows; each one undo step | ✅ |
+| Per-column validation (min/max, required, unique, pattern) editable from the UI | ⬜ |
+| Formulas: column-level and cross-table lookups (shared expression language) | ⬜ |
+| Curve editor with presets (linear, exponential, S-curve) and hand-tuned keys | ⬜ |
+| CSV import with column-type detection; compare two versions of a table | ⬜ |
+
 ### Backlog (post-MVP)
 - Production chain optimizer: choose between alternative recipes with linear programming
 - Level / flow diagrams (level progression, gating, metroidvania maps)

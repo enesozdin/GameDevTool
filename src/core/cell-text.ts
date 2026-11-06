@@ -3,13 +3,24 @@
  *   list    a, b, c
  *   stacks  IronOre*2, Slag*1@0.1     (item*count@chance; count defaults to 1)
  *           #Fuel*1                   (any item tagged Fuel; recipe inputs only)
- * Engine exports use csv-formats.ts instead; this is only the in-app editing syntax.
+ * Engine exports use csv-formats.ts instead; this is the in-app editing syntax, also used
+ * by grid copy/paste (grid.ts).
  */
-import { isTagStack, type CellValue, type ColumnType, type Id, type RowNames, type ScalarType, type Stack } from "../../core/index.ts";
-import { parseNumberInput } from "../production/format.ts";
+import type { RowNames } from "./export/table-csv.ts";
+import type { Id } from "./model/primitives.ts";
+import { isTagStack, type CellValue, type ColumnType, type ScalarType, type Stack } from "./model/table.ts";
+
+/** Parses a user-typed number ("1.5", "1,5", "2e3"); empty → null, invalid → undefined. */
+export function parseNumberInput(text: string): number | null | undefined {
+  const t = text.trim().replace(",", ".");
+  if (t === "") return null;
+  if (!/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(t)) return undefined;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : undefined;
+}
 
 /** undefined = invalid input; null = empty cell. */
-export type Parsed = CellValue | undefined;
+export type ParsedCell = CellValue | undefined;
 
 export function cellToText(type: ColumnType, value: CellValue | undefined, names: RowNames): string {
   if (value === undefined || value === null) return "";
@@ -60,7 +71,7 @@ function scalarFromText(type: ScalarType, text: string, names: RowNames): string
   }
 }
 
-export function textToCell(type: ColumnType, text: string, names: RowNames, previous: CellValue | undefined, newId: () => Id): Parsed {
+export function textToCell(type: ColumnType, text: string, names: RowNames, previous: CellValue | undefined, newId: () => Id): ParsedCell {
   if (text.trim() === "" && type.kind !== "string") return null;
   switch (type.kind) {
     case "text": {
