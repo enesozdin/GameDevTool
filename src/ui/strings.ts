@@ -445,7 +445,24 @@ export const en = {
     format: "CSV format",
     formats: { generic: "Generic (JSON cells)", unreal: "Unreal DataTable" } as Record<string, string>,
     rowsCount: (n: number) => `${n} ${n === 1 ? "row" : "rows"}`,
-    empty: "No rows yet.",
+    empty: "No rows yet. Add a row, or paste rows from a spreadsheet.",
+    deleteSelectedRow: "Delete row",
+    deleteSelectedRows: (n: number) => `Delete ${n} rows`,
+    confirmDeleteRows: (n: number, used: number) =>
+      `Delete ${n} ${n === 1 ? "row" : "rows"}?${used > 0 ? ` They are used in ${used} ${used === 1 ? "place" : "places"}, which will be left broken.` : ""} You can undo this.`,
+    gridHelp: "Arrows move, Shift+arrows select. Enter, F2 or typing edits; Ctrl+Enter writes the edit into every selected cell. Space toggles Yes/No. Delete clears, Ctrl+D fills down, Ctrl+C / Ctrl+V copy and paste with spreadsheets.",
+    pasted: (invalid: number, skipped: number) =>
+      [
+        invalid > 0 ? `${invalid} pasted ${invalid === 1 ? "value does" : "values do"} not fit ${invalid === 1 ? "its column" : "their columns"} and ${invalid === 1 ? "was" : "were"} left out.` : "",
+        skipped > 0 ? `${skipped} ${skipped === 1 ? "value had" : "values had"} no cell to go to.` : "",
+      ]
+        .filter((t) => t !== "")
+        .join(" "),
+    pastedRows: (n: number) => `Added ${n} ${n === 1 ? "row" : "rows"}.`,
+    tooManyCells: (limit: number) => `Too many cells at once (at most ${limit.toLocaleString("en")}). Select a smaller range.`,
+    yes: "Yes",
+    no: "No",
+    noValue: "–",
     invalidValue: "Invalid value",
     curveSummary: (n: number) => `${n} keys`,
     stacksHint: "e.g. IronOre*2, Slag*1@0.1, #Fuel*1 (any item tagged Fuel)",

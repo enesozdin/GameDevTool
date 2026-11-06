@@ -17,6 +17,8 @@ export * from "./persistence/project-folder.ts";
 export * from "./history.ts";
 export * from "./edits.ts";
 export * from "./table-edits.ts";
+export * from "./cell-text.ts";
+export * from "./table-grid.ts";
 export * from "./variable-edits.ts";
 export * from "./expr/index.ts";
 export * from "./export/csv-formats.ts";

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { parseNumberInput } from "../production/format.ts";
+import { parseNumberInput } from "../../core/index.ts";
 
 export interface NumberFieldProps {
   readonly id: string;

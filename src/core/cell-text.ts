@@ -1,12 +1,23 @@
 /**
- * Plain-text editing of cells in the grid. Short syntaxes designers can type:
+ * Plain-text form of cells, used for editing in the grid and for the clipboard. Short
+ * syntaxes designers can type:
  *   list    a, b, c
  *   stacks  IronOre*2, Slag*1@0.1     (item*count@chance; count defaults to 1)
  *           #Fuel*1                   (any item tagged Fuel; recipe inputs only)
  * Engine exports use csv-formats.ts instead; this is only the in-app editing syntax.
  */
-import { isTagStack, type CellValue, type ColumnType, type Id, type RowNames, type ScalarType, type Stack } from "../../core/index.ts";
-import { parseNumberInput } from "../production/format.ts";
+import type { RowNames } from "./export/table-csv.ts";
+import type { Id } from "./model/primitives.ts";
+import { isTagStack, type CellValue, type ColumnType, type ScalarType, type Stack } from "./model/table.ts";
+
+/** Parses a user-typed number; empty → null, invalid → undefined. Accepts a decimal comma. */
+export function parseNumberInput(text: string): number | null | undefined {
+  const t = text.trim().replace(",", ".");
+  if (t === "") return null;
+  if (!/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(t)) return undefined;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : undefined;
+}
 
 /** undefined = invalid input; null = empty cell. */
 export type Parsed = CellValue | undefined;
@@ -49,8 +60,11 @@ function scalarFromText(type: ScalarType, text: string, names: RowNames): string
       const n = parseNumberInput(t);
       return typeof n === "number" ? n : undefined;
     }
-    case "bool":
-      return t === "true" ? true : t === "false" ? false : undefined;
+    case "bool": {
+      // Spreadsheets copy booleans as TRUE / FALSE.
+      const b = t.toLowerCase();
+      return b === "true" || b === "1" ? true : b === "false" || b === "0" ? false : undefined;
+    }
     case "string":
       return text;
     case "enum":
