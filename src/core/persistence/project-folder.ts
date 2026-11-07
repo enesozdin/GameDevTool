@@ -164,9 +164,18 @@ export async function openProjectFolder(io: FolderIo, options: LoadOptions = {})
 
   // Depth offsets: in a single file the manifest sits at depth 2 and each asset at depth 3.
   const manifestRaw = parse(manifestText, 1, FOLDER_MANIFEST_FILE);
-  if (!manifestRaw.ok) return manifestRaw;
-  const m = manifestRaw.value;
-  if (isJsonObject(m) && isJsonObject(m["manifest"]) && "assets" in m) return err({ code: "single-file-project", file: FOLDER_MANIFEST_FILE });
+  if (!manifestRaw.ok) {
+    // A whole project file at the single-file depth limit is one level too deep for the
+    // manifest's place, so it fails here before the shape check below. Parse it once more
+    // with the single-file limits, only to say what it is: this branch always returns an
+    // error, the value is never loaded and the folder's value budget is not touched.
+    if (manifestRaw.error.code === "too-deep") {
+      const asFile = parseUntrustedJsonCounted(manifestText, limits);
+      if (asFile.ok && isSingleFileProject(asFile.value.value)) return err({ code: "single-file-project", file: FOLDER_MANIFEST_FILE });
+    }
+    return manifestRaw;
+  }
+  if (isSingleFileProject(manifestRaw.value)) return err({ code: "single-file-project", file: FOLDER_MANIFEST_FILE });
   const assetsRaw: JsonValue[] = [];
   for (let i = 0; i < assetTexts.length; i++) {
     const raw = parse(assetTexts[i]!, 2, paths[i]!);
@@ -194,6 +203,11 @@ export async function openProjectFolder(io: FolderIo, options: LoadOptions = {})
   }
   const manifest = { value: isCanonical(project.manifest, manifestText) ? project.manifest : null, stamp: manifestFile.stamp };
   return ok({ loaded: loaded.value, session: { manifest, assets } });
+}
+
+/** Whether a parsed manifest file is in fact a whole project file (`manifest` + `assets`). */
+function isSingleFileProject(value: JsonValue): boolean {
+  return isJsonObject(value) && isJsonObject(value["manifest"]) && "assets" in value;
 }
 
 /**

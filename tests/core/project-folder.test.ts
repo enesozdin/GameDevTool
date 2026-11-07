@@ -333,6 +333,52 @@ describe("project folder", () => {
       assert.equal("file" in opened.error && opened.error.file, FOLDER_MANIFEST_FILE);
     });
 
+    describe("a single project file saved as the manifest, at the depth limit", () => {
+      // The manifest file gets one level less than a single file (it sits below the root),
+      // so a project file at exactly maxDepth used to fail as too-deep there.
+      const maxDepth = DEFAULT_JSON_LIMITS.maxDepth;
+      /** `value` plus an unknown key nested so the whole document is `depth` levels deep. */
+      const withDepth = (value: object, depth: number, leaf: unknown = []): string => {
+        let v = leaf;
+        for (let i = 0; i < depth - 2; i++) v = [v];
+        return JSON.stringify({ ...value, extra: v });
+      };
+      const open = (text: string) => {
+        const folder = new MemoryFolder();
+        folder.put(FOLDER_MANIFEST_FILE, text);
+        return openProjectFolder(folder);
+      };
+      const project = () => JSON.parse(saveProject(sampleProject()));
+
+      it("is still recognized at maxDepth (the depth Open… accepts)", async () => {
+        const opened = await open(withDepth(project(), maxDepth));
+        assert.ok(!opened.ok && opened.error.code === "single-file-project");
+        assert.equal(opened.error.file, FOLDER_MANIFEST_FILE);
+      });
+
+      it("is too deep past maxDepth, like with Open…", async () => {
+        const opened = await open(withDepth(project(), maxDepth + 1));
+        assert.ok(!opened.ok && opened.error.code === "too-deep");
+        assert.equal(opened.error.limit, maxDepth - 1);
+      });
+
+      it("keeps a forbidden key an error, never a pointer to Open…", async () => {
+        // The key sits in an object at depth maxDepth: past the manifest limit, within the file limit.
+        const opened = await open(withDepth(project(), maxDepth - 1, [JSON.parse('{"__proto__": 1}')]));
+        assert.ok(!opened.ok && opened.error.code === "too-deep");
+        // Control: the same shape with an ordinary key is recognized.
+        const control = await open(withDepth(project(), maxDepth - 1, [{ a: 1 }]));
+        assert.ok(!control.ok && control.error.code === "single-file-project");
+      });
+
+      it("reports a real manifest that is too deep against the manifest limit", async () => {
+        const opened = await open(withDepth(project().manifest, maxDepth));
+        assert.ok(!opened.ok && opened.error.code === "too-deep");
+        assert.equal(opened.error.limit, maxDepth - 1);
+        assert.equal(opened.error.file, FOLDER_MANIFEST_FILE);
+      });
+    });
+
     it("recognizes a single project file saved as the manifest", async () => {
       const folder = new MemoryFolder();
       folder.put(FOLDER_MANIFEST_FILE, saveProject(sampleProject()));
