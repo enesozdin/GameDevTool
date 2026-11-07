@@ -976,6 +976,27 @@ button.icon {
   border-bottom: 1px solid var(--border);
 }
 
+/* Receives the browser's copy/cut/paste for the grid (see TableGrid.tsx); invisible. */
+.tgrid-clip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  resize: none;
+  pointer-events: none;
+}
+
+/* The active or edited cell, kept rendered while scrolled sideways out of view. */
+.tcell-float {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
 .tgrid-spacer {
   flex: none;
 }

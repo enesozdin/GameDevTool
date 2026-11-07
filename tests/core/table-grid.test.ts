@@ -9,6 +9,7 @@ import {
   gridRange,
   MAX_GRID_WRITE_CELLS,
   parseClipboardText,
+  parseNumberInput,
   pasteGrid,
   rowNames,
   setBoolRange,
@@ -17,6 +18,7 @@ import {
   type Change,
   type GridRange,
   type Project,
+  type RowNames,
   type TableAsset,
 } from "../../src/core/index.ts";
 import { fixedIds } from "../helpers.ts";
@@ -72,18 +74,25 @@ function stats(project: Project): TableAsset {
 
 const all = (t: TableAsset): GridRange => ({ top: 0, left: 0, bottom: t.rows.length - 1, right: t.columns.length });
 
+/** copyRange's text; fails the test when the copy is refused. */
+function copyText(table: TableAsset, range: GridRange, names: RowNames): string {
+  const res = copyRange(table, range, names);
+  assert.ok(res.ok);
+  return res.value;
+}
+
 describe("table grid: copy", () => {
   it("copies a range as TSV with names, enum names and reference names", () => {
     const { project, stats: t } = sample();
-    const tsv = copyRange(t, { top: 0, left: 0, bottom: 1, right: 6 }, rowNames(project));
-    assert.equal(tsv, "Goblin\t10\t1.5\tGoblin\tfalse\tCommon\tOre\nBat\t4\t\t\ttrue\t\t");
+    const tsv = copyText(t, { top: 0, left: 0, bottom: 1, right: 6 }, rowNames(project));
+    assert.equal(tsv, "Goblin\t10\t1.5\tGoblin\tfalse\tCommon\tOre\nBat\t4\t\t\ttrue\t\t\n");
   });
 
   it("quotes fields with tabs, quotes and line breaks, and the text parses back", () => {
     const { project, stats: t, col } = sample();
     const sources = ["a\tb", 'say "hi"', "line1\nline2"];
     const table: TableAsset = { ...t, rows: t.rows.map((r, i) => ({ ...r, cells: { [col.name]: { key: `k${i}`, source: sources[i]! } } })) };
-    const tsv = copyRange(table, { top: 0, left: 0, bottom: 2, right: 3 }, rowNames(project));
+    const tsv = copyText(table, { top: 0, left: 0, bottom: 2, right: 3 }, rowNames(project));
     assert.deepEqual(parseClipboardText(tsv), [
       ["Goblin", "", "", sources[0]],
       ["Bat", "", "", sources[1]],
@@ -93,7 +102,34 @@ describe("table grid: copy", () => {
 
   it("clamps ranges to the table", () => {
     const { project, stats: t } = sample();
-    assert.equal(copyRange(t, { top: 2, left: 0, bottom: 99, right: 1 }, rowNames(project)), "Troll\t40");
+    assert.equal(copyText(t, { top: 2, left: 0, bottom: 99, right: 1 }, rowNames(project)), "Troll\t40\n");
+  });
+
+  it("copies one filled cell without a trailing newline", () => {
+    const { project, stats: t } = sample();
+    assert.equal(copyText(t, { top: 0, left: 1, bottom: 0, right: 1 }, rowNames(project)), "10");
+  });
+
+  it("keeps empty cells at the end of a column, so a copy pastes back unchanged", () => {
+    const { project, newId, stats: t, col } = sample();
+    const names = rowNames(project);
+    // Speed is 1.5, empty, empty. After rows 2 and 3 get a speed, pasting the copy back over
+    // the column must empty them again (not repeat 1.5).
+    const tsv = copyText(t, { top: 0, left: 2, bottom: 2, right: 2 }, names);
+    t.rows[1]!.cells[col.speed] = 7;
+    t.rows[2]!.cells[col.speed] = 7;
+    const res = pasteGrid(project, t.id, { top: 0, left: 2, bottom: 2, right: 2 }, parseClipboardText(tsv), names, newId);
+    assert.ok(res.ok);
+    assert.deepEqual(stats(apply(project, res.value.change)).rows.map((r) => r.cells[col.speed]), [1.5, undefined, undefined]);
+  });
+
+  it("refuses to copy more cells than the limit", () => {
+    const { project, stats: t } = sample();
+    const res = copyRange(t, { top: 0, left: 0, bottom: 2, right: 7 }, rowNames(project));
+    assert.ok(res.ok);
+    const rows = Array.from({ length: Math.ceil(MAX_GRID_WRITE_CELLS / 8) + 1 }, (_, i) => ({ id: `r${i}`, name: `R${i}`, cells: {} }));
+    const big = copyRange({ ...t, rows }, { top: 0, left: 0, bottom: rows.length - 1, right: 7 }, rowNames(project));
+    assert.deepEqual(big, { ok: false, error: { code: "too-many-cells", limit: MAX_GRID_WRITE_CELLS } });
   });
 });
 
@@ -209,6 +245,49 @@ describe("table grid: paste", () => {
     assert.deepEqual(validateProject(after), []);
   });
 
+  it("names many appended rows in linear time, within the identifier length", () => {
+    const { project, newId, stats: t } = sample();
+    const longName = "N".repeat(64);
+    const count = 120_000;
+    const start = performance.now();
+    const res = pasteGrid(project, t.id, { top: 3, left: 0, bottom: 3 + count - 1, right: 0 }, [[longName]], rowNames(project), newId);
+    const ms = performance.now() - start;
+    assert.ok(res.ok);
+    assert.equal(res.value.addedRows, count);
+    const rows = stats(apply(project, res.value.change)).rows;
+    assert.ok(rows.every((r) => r.name.length <= 64));
+    assert.equal(new Set(rows.map((r) => r.name.toLowerCase())).size, rows.length);
+    assert.equal(rows.at(-1)!.name, `${"N".repeat(57)}_120000`);
+    assert.ok(ms < 5_000, `took ${ms} ms`);
+  });
+
+  it("appends right after the last row, never past it", () => {
+    const { project, newId, stats: t } = sample();
+    const names = rowNames(project);
+    const at = pasteGrid(project, t.id, { top: 3, left: 0, bottom: 3, right: 1 }, [["Dragon", "99"]], names, newId);
+    assert.ok(at.ok);
+    const rows = stats(apply(project, at.value.change)).rows;
+    assert.deepEqual(rows.map((r) => r.name), ["Goblin", "Bat", "Troll", "Dragon"]);
+    const gap = pasteGrid(project, t.id, { top: 5, left: 0, bottom: 5, right: 1 }, [["Dragon", "99"]], names, newId);
+    assert.deepEqual(gap, { ok: true, value: { change: null, invalid: 0, skipped: 0, addedRows: 0 } });
+  });
+
+  it("writes only the fields a ragged clipboard row has", () => {
+    const { project, newId, stats: t, col } = sample();
+    const res = pasteGrid(project, t.id, { top: 0, left: 1, bottom: 0, right: 1 }, [["1", "2"], ["3"]], rowNames(project), newId);
+    assert.ok(res.ok);
+    const rows = stats(apply(project, res.value.change)).rows;
+    assert.deepEqual([rows[0]!.cells[col.hp], rows[0]!.cells[col.speed], rows[1]!.cells[col.hp], rows[1]!.cells[col.speed]], [1, 2, 3, undefined]);
+  });
+
+  it("keeps the translator note of a pasted-over text", () => {
+    const { project, newId, stats: t, col } = sample();
+    t.rows[0]!.cells[col.name] = { key: "k.goblin", source: "Goblin", context: "Enemy name" };
+    const res = pasteGrid(project, t.id, { top: 0, left: 3, bottom: 0, right: 3 }, [["Gob"]], rowNames(project), newId);
+    assert.ok(res.ok);
+    assert.deepEqual(stats(apply(project, res.value.change)).rows[0]!.cells[col.name], { key: "k.goblin", source: "Gob", context: "Enemy name" });
+  });
+
   it("refuses writes larger than the limit", () => {
     const { project, newId, stats: t } = sample();
     const res = pasteGrid(project, t.id, { top: 0, left: 1, bottom: MAX_GRID_WRITE_CELLS, right: 1 }, [["1"]], rowNames(project), newId);
@@ -243,6 +322,20 @@ describe("table grid: fill, clear, Yes/No", () => {
     assert.deepEqual(first, { ok: true, value: null });
   });
 
+  it("fills a one-row selection at the top: nothing above, no change", () => {
+    const { project, newId, stats: t } = sample();
+    assert.deepEqual(fillDown(project, t.id, { top: 0, left: 0, bottom: 0, right: 6 }, newId), { ok: true, value: null });
+  });
+
+  it("does not clear curves (copy and paste skip them too)", () => {
+    const { project, stats: t, col } = sample();
+    const curve = { interp: "linear" as const, keys: [{ x: 0, y: 1 }] };
+    t.rows[0]!.cells[col.path] = curve;
+    const res = clearRange(project, t.id, all(t));
+    assert.ok(res.ok);
+    assert.deepEqual(stats(apply(project, res.value)).rows[0]!.cells[col.path], curve);
+  });
+
   it("clears data cells but not names", () => {
     const { project, stats: t } = sample();
     const res = clearRange(project, t.id, all(t));
@@ -270,5 +363,13 @@ describe("cell text", () => {
     assert.equal(textToCell({ kind: "bool" }, "TRUE", names, undefined, id), true);
     assert.equal(textToCell({ kind: "bool" }, "0", names, undefined, id), false);
     assert.equal(textToCell({ kind: "bool" }, "yes", names, undefined, id), undefined);
+  });
+
+  it("accepts a decimal comma but rejects an ambiguous thousands separator", () => {
+    assert.equal(parseNumberInput("1,5"), 1.5);
+    assert.equal(parseNumberInput("0,125"), 0.125);
+    assert.equal(parseNumberInput("1,234"), undefined);
+    assert.equal(parseNumberInput("-12,345,678"), undefined);
+    assert.equal(parseNumberInput("1234"), 1234);
   });
 });

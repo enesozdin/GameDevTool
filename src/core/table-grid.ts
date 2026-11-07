@@ -14,7 +14,7 @@ import type { Id } from "./model/primitives.ts";
 import type { Project } from "./model/project.ts";
 import { TABLE_LIMITS, type CellValue, type Column, type Row, type TableAsset } from "./model/table.ts";
 import { err, ok, type Result } from "./result.ts";
-import { isValidIdentifier } from "./table-edits.ts";
+import { findTable, isValidIdentifier, sameCellValue, suffixedName } from "./table-edits.ts";
 
 export interface GridPoint {
   readonly row: number;
@@ -63,10 +63,14 @@ export function isTextEditable(column: Column): boolean {
 // Clipboard text
 // ---------------------------------------------------------------------------------------
 
-/** The range as tab-separated text, the format Excel, Google Sheets and Unreal paste. */
-export function copyRange(table: TableAsset, range: GridRange, names: RowNames): string {
+/**
+ * The range as tab-separated text, the format Excel, Google Sheets and Unreal paste.
+ * Refused above MAX_GRID_WRITE_CELLS, which bounds the text built on the main thread.
+ */
+export function copyRange(table: TableAsset, range: GridRange, names: RowNames): Result<string, GridWriteError> {
   const r = clampRange(table, range);
-  if (r === null) return "";
+  if (r === null) return ok("");
+  if (rangeCellCount(r) > MAX_GRID_WRITE_CELLS) return err({ code: "too-many-cells", limit: MAX_GRID_WRITE_CELLS });
   const out: string[][] = [];
   for (let i = r.top; i <= r.bottom; i++) {
     const row = table.rows[i]!;
@@ -80,8 +84,11 @@ export function copyRange(table: TableAsset, range: GridRange, names: RowNames):
     }
     out.push(fields);
   }
-  // No trailing newline: pasting one cell into a text field should not add a line break.
-  return writeCsv(out, "\t").slice(0, -1);
+  const text = writeCsv(out, "\t");
+  // One filled cell: no trailing newline, so pasting it into a text field adds no line
+  // break. Otherwise the newline stays: it keeps empty cells at the end of the block
+  // (a column ending in empty cells would otherwise paste back one row short).
+  return ok(out.length === 1 && out[0]!.length === 1 && out[0]![0] !== "" ? text.slice(0, -1) : text);
 }
 
 /**
@@ -113,18 +120,11 @@ export interface GridWrite {
 
 export type GridWriteError = { readonly code: "too-many-cells"; readonly limit: number };
 
-function tableIndex(project: Project, tableId: Id): number {
-  const index = project.assets.findIndex((a) => a.id === tableId && a.kind === "table");
-  return index;
-}
-
-function sameValue(a: CellValue | undefined, b: CellValue | undefined): boolean {
-  return a === b || (a !== undefined && b !== undefined && a !== null && b !== null && JSON.stringify(a) === JSON.stringify(b));
-}
-
 /** Tracks row names while a paste renames rows, so names stay unique (case-insensitive). */
 class RowNameSet {
   private readonly counts = new Map<string, number>();
+  /** Next suffix to try per base name, so handing out n names costs O(n), not O(n²). */
+  private readonly nextSuffix = new Map<string, number>();
   constructor(rows: readonly Row[]) {
     for (const row of rows) this.add(row.name);
   }
@@ -138,13 +138,16 @@ class RowNameSet {
     if (n <= 0) this.counts.delete(key);
     else this.counts.set(key, n);
   }
-  /** `base`, or `base_2`, `base_3`, … if taken. Does not add it. */
+  /** `base`, or `base_2`, `base_3`, … if taken (shortened to stay a valid identifier). Does not add it. */
   free(base: string): string {
-    if (!this.counts.has(base.toLowerCase())) return base;
-    const stem = base.slice(0, 58);
-    for (let i = 2; ; i++) {
-      const name = `${stem}_${i}`;
-      if (!this.counts.has(name.toLowerCase())) return name;
+    const key = base.toLowerCase();
+    if (!this.counts.has(key)) return base;
+    for (let i = this.nextSuffix.get(key) ?? 2; ; i++) {
+      const name = suffixedName(base, i);
+      if (!this.counts.has(name.toLowerCase())) {
+        this.nextSuffix.set(key, i + 1);
+        return name;
+      }
     }
   }
 }
@@ -160,9 +163,9 @@ class RowNameSet {
  * cell unchanged and are counted. Pasted row names are made unique by adding `_2`, `_3`, ….
  */
 export function pasteGrid(project: Project, tableId: Id, range: GridRange, fields: readonly (readonly string[])[], names: RowNames, newId: IdGenerator): Result<GridWrite, GridWriteError> {
-  const ai = tableIndex(project, tableId);
-  if (ai < 0 || fields.length === 0) return ok({ change: null, invalid: 0, skipped: 0, addedRows: 0 });
-  const table = project.assets[ai] as TableAsset;
+  const at = findTable(project, tableId);
+  if (at === null || fields.length === 0) return ok({ change: null, invalid: 0, skipped: 0, addedRows: 0 });
+  const { table, index: ai } = at;
   // Pasting may append rows, but only directly after the last one.
   if (range.top > table.rows.length) return ok({ change: null, invalid: 0, skipped: 0, addedRows: 0 });
   const height = fields.length;
@@ -224,7 +227,7 @@ export function pasteGrid(project: Project, tableId: Id, range: GridRange, field
       const next = parsed === null ? undefined : parsed;
       if (cells !== null) {
         if (next !== undefined) cells[column.id] = next;
-      } else if (!sameValue(previous, next)) {
+      } else if (!sameCellValue(previous, next)) {
         patches.push({ op: "set", path: ["assets", ai, "rows", r, "cells", column.id], value: next });
       }
     }
@@ -255,9 +258,9 @@ function writeRange(
   accept: (column: Column) => boolean,
   value: (row: Row, column: Column) => CellValue | undefined,
 ): Result<Change | null, GridWriteError> {
-  const ai = tableIndex(project, tableId);
-  if (ai < 0) return ok(null);
-  const table = project.assets[ai] as TableAsset;
+  const at = findTable(project, tableId);
+  if (at === null) return ok(null);
+  const { table, index: ai } = at;
   const r = clampRange(table, { ...range, left: Math.max(1, range.left) });
   if (r === null) return ok(null);
   if (rangeCellCount(r) > MAX_GRID_WRITE_CELLS) return err({ code: "too-many-cells", limit: MAX_GRID_WRITE_CELLS });
@@ -267,15 +270,15 @@ function writeRange(
     const row = table.rows[i]!;
     for (const column of columns) {
       const next = value(row, column);
-      if (!sameValue(row.cells[column.id], next)) patches.push({ op: "set", path: ["assets", ai, "rows", i, "cells", column.id], value: next });
+      if (!sameCellValue(row.cells[column.id], next)) patches.push({ op: "set", path: ["assets", ai, "rows", i, "cells", column.id], value: next });
     }
   }
   return ok(patches.length === 0 ? null : { label, patches });
 }
 
-/** Empties the data cells of the range (row names stay). */
+/** Empties the data cells of the range. Row names stay, and so do curves (copy and paste skip them too). */
 export function clearRange(project: Project, tableId: Id, range: GridRange): Result<Change | null, GridWriteError> {
-  return writeRange(project, tableId, range, "clear-cells", () => true, () => undefined);
+  return writeRange(project, tableId, range, "clear-cells", isTextEditable, () => undefined);
 }
 
 /** Sets every Yes/No cell of the range; other columns are left alone. */
@@ -290,9 +293,9 @@ export function setBoolRange(project: Project, tableId: Id, range: GridRange, va
  * targets get a new key.
  */
 export function fillDown(project: Project, tableId: Id, range: GridRange, newId: IdGenerator): Result<Change | null, GridWriteError> {
-  const ai = tableIndex(project, tableId);
-  if (ai < 0) return ok(null);
-  const table = project.assets[ai] as TableAsset;
+  const at = findTable(project, tableId);
+  if (at === null) return ok(null);
+  const { table } = at;
   const oneRow = range.top === range.bottom;
   const sourceIndex = oneRow ? range.top - 1 : range.top;
   const source = table.rows[sourceIndex];

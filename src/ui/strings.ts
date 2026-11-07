@@ -273,6 +273,10 @@ export const en = {
     "remove-rows": "delete row",
     "rename-row": "rename row",
     "edit-cell": "edit cell",
+    "edit-cells": "edit cells",
+    "paste-cells": "paste",
+    "clear-cells": "clear cells",
+    "fill-down": "fill down",
     "add-column": "add column",
     "rename-column": "rename column",
     "remove-column": "delete column",
@@ -448,9 +452,12 @@ export const en = {
     empty: "No rows yet. Add a row, or paste rows from a spreadsheet.",
     deleteSelectedRow: "Delete row",
     deleteSelectedRows: (n: number) => `Delete ${n} rows`,
+    fillDown: "Fill down",
+    fillDownHint: "Copies the first selected row into the selected rows below it (Ctrl+D). With one row selected, copies the row above.",
+    rowActions: "Row actions",
     confirmDeleteRows: (n: number, used: number) =>
       `Delete ${n} ${n === 1 ? "row" : "rows"}?${used > 0 ? ` They are used in ${used} ${used === 1 ? "place" : "places"}, which will be left broken.` : ""} You can undo this.`,
-    gridHelp: "Arrows move, Shift+arrows select. Enter, F2 or typing edits; Ctrl+Enter writes the edit into every selected cell. Space toggles Yes/No. Delete clears, Ctrl+D fills down, Ctrl+C / Ctrl+V copy and paste with spreadsheets.",
+    gridHelp: "Arrows move, Shift+arrows select. Enter, F2 or typing edits; Ctrl+Enter writes the edit into every selected cell. Space toggles Yes/No. Delete clears, Ctrl+D fills down, Ctrl+C / Ctrl+X / Ctrl+V copy, cut and paste with spreadsheets.",
     pasted: (invalid: number, skipped: number) =>
       [
         invalid > 0 ? `${invalid} pasted ${invalid === 1 ? "value does" : "values do"} not fit ${invalid === 1 ? "its column" : "their columns"} and ${invalid === 1 ? "was" : "were"} left out.` : "",

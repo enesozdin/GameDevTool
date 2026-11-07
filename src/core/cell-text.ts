@@ -12,8 +12,12 @@ import { isTagStack, type CellValue, type ColumnType, type ScalarType, type Stac
 
 /** Parses a user-typed number; empty → null, invalid → undefined. Accepts a decimal comma. */
 export function parseNumberInput(text: string): number | null | undefined {
-  const t = text.trim().replace(",", ".");
-  if (t === "") return null;
+  const trimmed = text.trim();
+  if (trimmed === "") return null;
+  // "1,234" is a thousands separator in English spreadsheets but 1.234 in many locales:
+  // ambiguous, so it is rejected instead of silently read as a decimal.
+  if (/^[-+]?[1-9]\d{0,2}(,\d{3})+$/.test(trimmed)) return undefined;
+  const t = trimmed.replace(",", ".");
   if (!/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(t)) return undefined;
   const n = Number(t);
   return Number.isFinite(n) ? n : undefined;
@@ -78,8 +82,9 @@ export function textToCell(type: ColumnType, text: string, names: RowNames, prev
   if (text.trim() === "" && type.kind !== "string") return null;
   switch (type.kind) {
     case "text": {
-      const key = previous !== null && typeof previous === "object" && !Array.isArray(previous) && "key" in previous ? previous.key : newId();
-      return { key, source: text };
+      // Keeps the localization key and the translator note of the cell being replaced.
+      if (previous !== null && typeof previous === "object" && !Array.isArray(previous) && "key" in previous) return { ...previous, source: text };
+      return { key: newId(), source: text };
     }
     case "stacks": {
       const out: Stack[] = [];
