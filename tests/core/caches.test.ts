@@ -222,7 +222,9 @@ describe("duplicate ids in crafted files", () => {
   // Paths of duplicates used to be found by re-running the checks once per duplicate, so a
   // file with many duplicate ids took minutes to load. Now one pass collects all paths.
   const N = 20_000;
-  const LIMIT_MS = 2_000;
+  // Generous: a run takes well under 100 ms, the old quadratic path took minutes, so a slow
+  // machine cannot fail this while the regression is still caught.
+  const LIMIT_MS = 10_000;
 
   it("reports duplicate enum option ids at each later option, in linear time", () => {
     const newId = fixedIds(11);
