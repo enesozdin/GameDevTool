@@ -7,7 +7,7 @@ import { IdentifierSchema, type Id } from "./model/primitives.ts";
 import type { Project } from "./model/project.ts";
 import { isRoleColumn, TABLE_LIMITS, type CellValue, type Column, type ColumnType, type Row, type ScalarType, type TableAsset } from "./model/table.ts";
 import type { IdGenerator } from "./ids.ts";
-import { columnRenameCapture, renameColumnInFormulas } from "./formulas.ts";
+import { columnAddCapture, columnRemoveCapture, columnRenameCapture, renameColumnInFormulas } from "./formulas.ts";
 import { err, ok, type Result } from "./result.ts";
 
 export function isValidIdentifier(name: string): boolean {
@@ -87,9 +87,11 @@ export function setCell(project: Project, tableId: Id, rowId: Id, columnId: Id, 
   };
 }
 
+/** Adds a column. Refused (null) when a formula would then read it instead of a variable (columnAddCapture). */
 export function addColumn(project: Project, tableId: Id, column: Column): Change | null {
   const at = findTable(project, tableId);
   if (at === null || at.table.columns.length >= TABLE_LIMITS.columnsPerTable) return null;
+  if (columnAddCapture(project, tableId, column) !== undefined) return null;
   return { label: "add-column", patches: [{ op: "insert", path: ["assets", at.index, "columns"], index: at.table.columns.length, value: column }] };
 }
 
@@ -110,12 +112,16 @@ export function renameColumn(project: Project, tableId: Id, columnId: Id, name: 
   };
 }
 
-/** Removes a column and its cells. Columns used by the table's role cannot be removed. */
+/**
+ * Removes a column and its cells. Columns used by the table's role cannot be removed, nor
+ * columns whose removal would make a formula read something else (columnRemoveCapture).
+ */
 export function removeColumn(project: Project, tableId: Id, columnId: Id): Change | null {
   const at = findTable(project, tableId);
   if (at === null) return null;
   const i = at.table.columns.findIndex((c) => c.id === columnId);
   if (i < 0 || isRoleColumn(at.table, columnId)) return null;
+  if (columnRemoveCapture(project, tableId, columnId) !== undefined) return null;
   const patches: Patch[] = [{ op: "remove", path: ["assets", at.index, "columns"], index: i }];
   at.table.rows.forEach((row, r) => {
     if (Object.hasOwn(row.cells, columnId)) patches.push({ op: "set", path: ["assets", at.index, "rows", r, "cells", columnId], value: undefined });

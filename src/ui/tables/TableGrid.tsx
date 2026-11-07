@@ -28,6 +28,7 @@ import {
   isValidIdentifier,
   parseClipboardText,
   pasteGrid,
+  columnRemoveCapture,
   removeColumn,
   renameRow,
   setBoolRange,
@@ -491,7 +492,11 @@ export function TableGrid({ strings, project, table, names, newId, commit, notif
                   ●
                 </span>
               ) : (
-                <button type="button" className="icon" aria-label={s.deleteColumn(c.name)} onClick={() => commit(removeColumn(project, table.id, c.id))}>
+                <button type="button" className="icon" aria-label={s.deleteColumn(c.name)} onClick={() => {
+                    const capture = columnRemoveCapture(project, table.id, c.id);
+                    if (capture !== undefined) notify(s.removeColumnCaptured(c.name, capture.table, capture.column), "error");
+                    else commit(removeColumn(project, table.id, c.id));
+                  }}>
                   ×
                 </button>
               )}

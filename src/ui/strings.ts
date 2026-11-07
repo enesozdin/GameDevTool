@@ -476,6 +476,10 @@ export const en = {
     rowName: "Name",
     deleteRow: (name: string) => `Delete row ${name}`,
     deleteColumn: (name: string) => `Delete column ${name}`,
+    addColumnCaptured: (name: string, table: string, column: string) =>
+      `A column ${name} would make the formula of ${table}.${column} read it instead of the variable ${name}. Choose another name.`,
+    removeColumnCaptured: (name: string, table: string, column: string) =>
+      `${name} not deleted: the formula of ${table}.${column} would then read another ${name} (a variable or column) instead. Change the formula first.`,
     builtIn: "Built-in column",
     importCsv: "Import CSV…",
     exportCsv: "Export CSV",

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { columnTypeFromSpec, isValidIdentifier, type ColumnSpec, type ColumnType, type Id, type IdGenerator, type Project, type ScalarSpec, type TableAsset } from "../../core/index.ts";
+import { columnAddCapture, columnTypeFromSpec, isValidIdentifier, type ColumnSpec, type ColumnType, type Id, type IdGenerator, type Project, type ScalarSpec, type TableAsset } from "../../core/index.ts";
 import type { UiStrings } from "../strings.ts";
 
 const KINDS = ["float", "int", "string", "bool", "text", "enum", "reference", "list", "stacks"] as const;
@@ -49,7 +49,10 @@ export function NewColumnForm({ strings, project, table, newId, onAdd }: NewColu
   };
   // Validated with a throwaway id source; real ids are drawn only when the column is added.
   const check = columnTypeFromSpec(project, spec(), () => "");
-  const nameValid = isValidIdentifier(name) && !table.columns.some((c) => c.name.toLowerCase() === name.toLowerCase());
+  const nameFree = isValidIdentifier(name) && !table.columns.some((c) => c.name.toLowerCase() === name.toLowerCase());
+  // A column named like a variable that a formula of this table reads would take its place.
+  const capture = nameFree && check.ok ? columnAddCapture(project, table.id, { id: "", name, type: check.value }) : undefined;
+  const nameValid = nameFree && capture === undefined;
   const specMessage = check.ok || (needsOptions && options.trim() === "" && check.error.code === "enum-empty") ? null : check.error.name === undefined ? s.specErrors[check.error.code] : s.specErrorName(s.specErrors[check.error.code] ?? "", check.error.name);
 
   const add = () => {
@@ -115,6 +118,11 @@ export function NewColumnForm({ strings, project, table, newId, onAdd }: NewColu
       {specMessage !== null && (
         <span className="field-error small" role="alert">
           {specMessage}
+        </span>
+      )}
+      {capture !== undefined && (
+        <span className="field-error small" role="alert">
+          {s.addColumnCaptured(name, capture.table, capture.column)}
         </span>
       )}
     </>

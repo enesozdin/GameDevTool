@@ -726,19 +726,36 @@ export function renameColumnInFormulas(project: Project, tableId: Id, columnId: 
   return patches;
 }
 
-/** A formula that a rename would make read something else: its table and column names. */
+/** A formula that an edit would make read something else: its table and column names. */
 export interface FormulaCapture {
   readonly table: string;
   readonly column: string;
 }
 
-/** Names as they are, or as they would be after a rename. */
+/** Columns and variable names as they are, or as they would be after an edit. */
 interface NameWorld {
-  columnName(table: TableAsset, column: Column): string;
+  columns(table: TableAsset): readonly Column[];
   variableName(variable: Variable): string;
 }
 
-const AS_IS: NameWorld = { columnName: (_t, c) => c.name, variableName: (v) => v.name };
+const AS_IS: NameWorld = { columns: (t) => t.columns, variableName: (v) => v.name };
+
+/** The world with the columns of table `tableId` replaced by `edit(columns)` (computed once per table object). */
+function withColumns(tableId: Id, edit: (columns: readonly Column[]) => readonly Column[]): NameWorld {
+  const edited = new WeakMap<TableAsset, readonly Column[]>();
+  return {
+    columns: (t) => {
+      if (t.id !== tableId) return t.columns;
+      let columns = edited.get(t);
+      if (columns === undefined) {
+        columns = edit(t.columns);
+        edited.set(t, columns);
+      }
+      return columns;
+    },
+    variableName: AS_IS.variableName,
+  };
+}
 
 /**
  * What each part of a name chain resolves to, like FormulaScope.resolve: "c:<table>:<column>"
@@ -749,7 +766,7 @@ function chainTargets(table: TableAsset, parts: readonly string[], tables: Reado
   let current: TableAsset | undefined = table;
   for (let i = 0; i < parts.length; i++) {
     const key = parts[i]!.toLowerCase();
-    const column: Column | undefined = current?.columns.find((c) => world.columnName(current!, c).toLowerCase() === key);
+    const column: Column | undefined = current === undefined ? undefined : world.columns(current).find((c) => c.name.toLowerCase() === key);
     if (column === undefined) {
       if (i > 0 || parts.length > 1 || KEYWORDS.has(key)) return undefined;
       const variable = variables.find((v) => world.variableName(v).toLowerCase() === key);
@@ -761,21 +778,29 @@ function chainTargets(table: TableAsset, parts: readonly string[], tables: Reado
   return out;
 }
 
+interface CaptureEdit {
+  readonly after: NameWorld;
+  /** A rename: the target ("c:..." or "v:...") that gets the name `to`; the rename rewrites the parts naming it. */
+  readonly renamed?: { readonly target: string; readonly to: string };
+  /** Whether a name may stop resolving (a removed column: its formulas show an error). */
+  readonly errorAllowed: boolean;
+}
+
 /**
- * The first formula whose names would resolve to something else after a rename, in which
- * `renamed` is the target ("c:..." or "v:...") that gets the name `to`. Formulas naming
- * the renamed target itself are rewritten by the rename and only count when the new name
- * then resolves elsewhere (another column already called `to`). A name that does not
- * resolve before the rename may resolve after it: that turns an error into a value, not
- * one value into another, so it is allowed. Formulas that do not parse are skipped.
+ * The first formula whose names would resolve to something else after an edit. A name
+ * that does not resolve before the edit may resolve after it: that turns an error into a
+ * value, not one value into another, so it is allowed; so is the reverse when
+ * `errorAllowed`. Formulas that do not parse are skipped, and so are formula columns the
+ * edit removes.
  */
-function findCapture(project: Project, renamed: string, to: string, after: NameWorld): FormulaCapture | undefined {
+function findCapture(project: Project, edit: CaptureEdit): FormulaCapture | undefined {
   const tables = tableMap(project);
   const variables = project.manifest.variables;
   for (const asset of project.assets) {
     if (asset.kind !== "table") continue;
+    const kept = edit.after.columns(asset);
     for (const column of asset.columns) {
-      if (column.formula === undefined) continue;
+      if (column.formula === undefined || (kept !== asset.columns && !kept.some((c) => c.id === column.id))) continue;
       const parsed = parseExpression(column.formula);
       if (!parsed.ok) continue;
       const chains: NamePart[][] = [];
@@ -784,10 +809,10 @@ function findCapture(project: Project, renamed: string, to: string, after: NameW
         const names = chain.map((p) => p.name);
         const before = chainTargets(asset, names, tables, variables, AS_IS);
         if (before === undefined) continue;
-        // The rename rewrites exactly the parts that named the renamed target.
-        const rewritten = names.map((name, i) => (before[i] === renamed ? to : name));
-        const next = chainTargets(asset, rewritten, tables, variables, after);
-        if (next === undefined || next[next.length - 1] !== before[before.length - 1]) return { table: asset.name, column: column.name };
+        const renamed = edit.renamed;
+        const rewritten = renamed === undefined ? names : names.map((name, i) => (before[i] === renamed.target ? renamed.to : name));
+        const next = chainTargets(asset, rewritten, tables, variables, edit.after);
+        if (next === undefined ? !edit.errorAllowed : next[next.length - 1] !== before[before.length - 1]) return { table: asset.name, column: column.name };
       }
     }
   }
@@ -799,8 +824,8 @@ function findCapture(project: Project, renamed: string, to: string, after: NameW
  * called `to` in its table would then shadow the variable). Undefined when the rename is safe.
  */
 export function variableRenameCapture(project: Project, variableId: Id, to: string): FormulaCapture | undefined {
-  const after: NameWorld = { columnName: AS_IS.columnName, variableName: (v) => (v.id === variableId ? to : v.name) };
-  return findCapture(project, `v:${variableId}`, to, after);
+  const after: NameWorld = { columns: AS_IS.columns, variableName: (v) => (v.id === variableId ? to : v.name) };
+  return findCapture(project, { after, renamed: { target: `v:${variableId}`, to }, errorAllowed: false });
 }
 
 /**
@@ -809,6 +834,23 @@ export function variableRenameCapture(project: Project, variableId: Id, to: stri
  * Undefined when the rename is safe.
  */
 export function columnRenameCapture(project: Project, tableId: Id, columnId: Id, to: string): FormulaCapture | undefined {
-  const after: NameWorld = { columnName: (t, c) => (t.id === tableId && c.id === columnId ? to : c.name), variableName: AS_IS.variableName };
-  return findCapture(project, `c:${tableId}:${columnId}`, to, after);
+  const after = withColumns(tableId, (columns) => columns.map((c) => (c.id === columnId ? { ...c, name: to } : c)));
+  return findCapture(project, { after, renamed: { target: `c:${tableId}:${columnId}`, to }, errorAllowed: false });
+}
+
+/**
+ * A formula that adding `column` to table `tableId` would change: one in that table that
+ * reads a variable with the column's name, which the column would then shadow.
+ */
+export function columnAddCapture(project: Project, tableId: Id, column: Column): FormulaCapture | undefined {
+  return findCapture(project, { after: withColumns(tableId, (columns) => [...columns, column]), errorAllowed: true });
+}
+
+/**
+ * A formula that removing column `columnId` of table `tableId` would make read something
+ * else: a variable or another column with the same name. A formula that would just fail
+ * (nothing else has the name) does not count: it shows an error.
+ */
+export function columnRemoveCapture(project: Project, tableId: Id, columnId: Id): FormulaCapture | undefined {
+  return findCapture(project, { after: withColumns(tableId, (columns) => columns.filter((c) => c.id !== columnId)), errorAllowed: true });
 }

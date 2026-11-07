@@ -17,7 +17,11 @@ import {
   pasteGrid,
   printExpression,
   removeRows,
+  addColumn,
+  columnAddCapture,
+  columnRemoveCapture,
   columnRenameCapture,
+  removeColumn,
   renameColumn,
   rowNames,
   saveProject,
@@ -494,6 +498,40 @@ describe("formula edits", () => {
     assert.equal(renameColumn(p, materials.id, first, "Mult"), null);
     // The renamed column itself is rewritten, so renaming Mult is fine.
     assert.equal(columnRenameCapture(project, materials.id, m.mult, "Factor"), undefined);
+  });
+
+  it("refuses adding a column that would shadow a variable a formula reads", () => {
+    const { project, materials, weapons, newId } = sample();
+    // Damage reads the variable Level; a Weapons column Level would take its place.
+    const level: Column = { id: newId(), name: "level", type: { kind: "int" } };
+    assert.deepEqual(columnAddCapture(project, weapons.id, level), { table: "Weapons", column: "Damage" });
+    assert.equal(addColumn(project, weapons.id, level), null);
+    // In Materials no formula reads Level, and a column that fixes a formula error is fine.
+    assert.equal(columnAddCapture(project, materials.id, level), undefined);
+    assert.ok(addColumn(project, materials.id, level) !== null);
+    const p = withColumn(project, weapons.id, { id: newId(), name: "Fixme", type: { kind: "float" }, formula: "Bonus * 2" });
+    assert.ok(addColumn(p, weapons.id, { id: newId(), name: "Bonus", type: { kind: "float" } }) !== null);
+  });
+
+  it("refuses removing a column when its formulas would read another name instead", () => {
+    const { project, materials, weapons, w, newId } = sample();
+    // A Materials column Level shadows the variable; removing it would make Next read the variable.
+    const shadow = newId();
+    let p = withColumn(project, materials.id, { id: shadow, name: "Level", type: { kind: "int" } });
+    p = withColumn(p, materials.id, { id: newId(), name: "Next", type: { kind: "int" }, formula: "Level + 1" });
+    assert.deepEqual(columnRemoveCapture(p, materials.id, shadow), { table: "Materials", column: "Next" });
+    assert.equal(removeColumn(p, materials.id, shadow), null);
+    // Two columns called Base (a duplicate name): removing the first makes Damage read the second.
+    const second = newId();
+    const q = withColumn(project, weapons.id, { id: second, name: "Base", type: { kind: "float" } });
+    assert.deepEqual(columnRemoveCapture(q, weapons.id, w.base), { table: "Weapons", column: "Damage" });
+    assert.equal(columnRemoveCapture(q, weapons.id, second), undefined);
+    // Removing a column a formula reads with nothing else of that name: allowed, the formula shows an error.
+    assert.equal(columnRemoveCapture(project, weapons.id, w.base), undefined);
+    const r = apply(project, removeColumn(project, weapons.id, w.base));
+    assert.ok(evaluateFormulas(r).get(weapons.id, w.damage)!.error !== undefined);
+    // Removing the formula column itself is fine.
+    assert.ok(removeColumn(project, weapons.id, w.damage) !== null);
   });
 
   it("allows a rename that turns a formula error into a value", () => {
