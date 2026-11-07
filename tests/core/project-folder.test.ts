@@ -332,5 +332,13 @@ describe("project folder", () => {
       assert.ok(!opened.ok && opened.error.code === "unsupported-version");
       assert.equal("file" in opened.error && opened.error.file, FOLDER_MANIFEST_FILE);
     });
+
+    it("recognizes a single project file saved as the manifest", async () => {
+      const folder = new MemoryFolder();
+      folder.put(FOLDER_MANIFEST_FILE, saveProject(sampleProject()));
+      const opened = await openProjectFolder(folder);
+      assert.ok(!opened.ok && opened.error.code === "single-file-project");
+      assert.equal(opened.error.file, FOLDER_MANIFEST_FILE);
+    });
   });
 });

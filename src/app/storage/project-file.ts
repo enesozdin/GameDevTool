@@ -3,7 +3,7 @@
  * and when hosted. Files are read with Blob.text(), never fetch(), so the CSP's
  * `default-src 'none'` is never in the way.
  */
-import { DEFAULT_JSON_LIMITS, loadProject, PROJECT_FILE_EXTENSION, saveProject, type LoadedProject, type LoadError, type Project, type Result } from "../../core/index.ts";
+import { DEFAULT_JSON_LIMITS, LEGACY_PROJECT_FILE_EXTENSION, loadProject, PROJECT_FILE_EXTENSION, saveProject, type LoadedProject, type LoadError, type Project, type Result } from "../../core/index.ts";
 
 export type OpenError = LoadError | { readonly code: "read-failed" };
 
@@ -40,20 +40,11 @@ export function pickProjectFile(): Promise<File | null> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = `${PROJECT_FILE_EXTENSION},application/json`;
+    input.accept = `${PROJECT_FILE_EXTENSION},${LEGACY_PROJECT_FILE_EXTENSION},application/json`;
     input.addEventListener("change", () => resolve(input.files?.[0] ?? null), { once: true });
     input.addEventListener("cancel", () => resolve(null), { once: true });
     input.click();
   });
-}
-
-/** File name derived from the project name, safe on Windows, macOS and Linux. */
-export function defaultFileName(projectName: string): string {
-  const base = projectName
-    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
-    .replace(/^[.\s]+|[.\s]+$/g, "")
-    .slice(0, 100);
-  return `${base.length > 0 ? base : "project"}${PROJECT_FILE_EXTENSION}`;
 }
 
 /** Serializes the project and hands it to the browser as a download. */

@@ -16,7 +16,7 @@ export function projectJsonSchema(): string {
   const schema = z.toJSONSchema(ProjectSchema, { target: "draft-2020-12", io: "input" });
   return stableStringify({
     ...schema,
-    title: `GameDevTool project file (.gdtproj), schema version ${CURRENT_SCHEMA_VERSION}`,
+    title: `GameDevTool project file (.json), schema version ${CURRENT_SCHEMA_VERSION}`,
   });
 }
 

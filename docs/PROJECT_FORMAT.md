@@ -5,7 +5,7 @@ are validated against [`schema/project.v1.schema.json`](../schema/project.v1.sch
 
 | Form | Use | Browsers |
 |---|---|---|
-| **Project file** (`.gdtproj`) | Save / Open, sharing, backups | All |
+| **Project file** (`.json`) | Save / Open, sharing, backups | All |
 | **Project folder** | Working with Git: one file per asset | Chromium desktop (File System Access API) |
 
 All JSON is written deterministically: keys sorted, 2-space indent, `\n` line endings,
@@ -14,6 +14,17 @@ trailing newline. Saving the same data always produces the same bytes.
 ## Project file
 
 One JSON document: `{ "manifest": { … }, "assets": [ … ] }`.
+
+- **Extension: `.json`**, so every OS and editor treats it as plain text. The content
+  identifies a project (`manifest.format` is `"gamedevtool.project"`), never the name.
+- **Name:** the project name, made safe for every file system. It is never
+  `gamedevtool.json` (that name gets a `-project` suffix), so a downloaded project
+  cannot pass for a folder manifest.
+- **Legacy `.gdtproj`:** the extension used before 2026-11. Such files still open (the
+  content is the same); saving one writes `.json`.
+- **Mix-ups are reported:** opening a folder's `gamedevtool.json` as a project file, or a
+  folder whose `gamedevtool.json` is a whole project file, fails with a message that says
+  which one it is. Exports (CSV now, JSON later) are never project files.
 
 ## Production data
 
@@ -97,7 +108,7 @@ Tables export to engine-neutral CSV; see [CSV.md](CSV.md).
 
 ### Opening
 
-The folder is untrusted input, exactly like a `.gdtproj`. The size, nesting and value
+The folder is untrusted input, exactly like a project file. The size, nesting and value
 limits apply to the folder as a whole, measured as if it were one project file. The size
 limit (64 MiB) is checked in bytes on disk before any file is read, so non-ASCII text can
 hit it a little earlier than its character count alone would. Errors name the file they

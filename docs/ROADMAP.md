@@ -52,7 +52,7 @@ app. It does not depend on any single engine.
 
 ### 2.3 Data Model
 
-    Project (.gdtproj — a single JSON file, or a folder in folder mode)
+    Project (.json — a single JSON file, or a folder in folder mode)
      ├─ manifest       name, schema version, settings, project variables
      ├─ assets[]       each with a stable ULID id
      │    ├─ Document       GDD pages
@@ -90,7 +90,7 @@ Hosted mode adds two small files next to it: `manifest.json` and `sw.js`.
 1. **Folder mode** (Chromium desktop): open a real project folder via the File System
    Access API. One JSON file per asset, so it works directly with Git. Layout and save
    rules: [PROJECT_FORMAT.md](PROJECT_FORMAT.md).
-2. **Save / Open project file** (`.gdtproj` download/upload). **Always works**, on every
+2. **Save / Open project file** (`.json` download/upload). **Always works**, on every
    browser and in both modes.
 3. **Autosave** to IndexedDB is **only a crash-recovery cache**, not storage:
    - Chrome gives every local HTML file the same storage area, so other local pages

@@ -1508,6 +1508,6 @@
     "manifest",
     "assets"
   ],
-  "title": "GameDevTool project file (.gdtproj), schema version 1",
+  "title": "GameDevTool project file (.json), schema version 1",
   "type": "object"
 }

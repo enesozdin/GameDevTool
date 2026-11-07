@@ -18,9 +18,11 @@ import {
   redoLabel,
   removeAsset,
   renameAsset,
+  projectFileName,
   renameProject,
   saveProject,
   saveProjectFolder,
+  savedFileName,
   undoLabel,
   validateProject,
   createValidationCache,
@@ -39,7 +41,7 @@ import { TableEditor } from "../ui/tables/TableEditor.tsx";
 import type { UiStrings } from "../ui/strings.ts";
 import { AssetPanel, ProjectPanel } from "./panels.tsx";
 import { initialState, isDirty, reducer } from "./state.ts";
-import { defaultFileName, downloadProject, pickProjectFile, readProjectFile } from "./storage/project-file.ts";
+import { downloadProject, pickProjectFile, readProjectFile } from "./storage/project-file.ts";
 import { createFolderIo, ensureWritable, isFolderModeSupported, pickProjectFolder } from "./storage/project-folder.ts";
 import { clearRecovery, readLatestRecovery, writeRecovery, type RecoveryEntry } from "./storage/recovery.ts";
 import { downloadText, pickTextFile } from "./storage/text-file.ts";
@@ -229,14 +231,15 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
         void exclusive(() => writeFolder(target, project, false));
         return;
       }
-      const fileName = state.target?.kind === "file" ? state.target.name : defaultFileName(project.manifest.name);
+      // A project opened from a legacy .gdtproj file is saved as .json.
+      const fileName = state.target?.kind === "file" ? savedFileName(state.target.name) : projectFileName(project.manifest.name);
       downloadProject(project, fileName);
       folder.current = null;
       dispatch({ type: "saved", project, target: { kind: "file", name: fileName } });
       setNotice({ kind: "info", text: strings.status.savedFile(fileName) });
     },
     downloadCopy() {
-      const fileName = defaultFileName(project.manifest.name);
+      const fileName = projectFileName(project.manifest.name);
       downloadProject(project, fileName);
       setNotice({ kind: "info", text: strings.status.downloaded(fileName) });
     },

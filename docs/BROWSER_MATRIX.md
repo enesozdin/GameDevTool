@@ -21,7 +21,7 @@ Legend: ✅ verified working · ❌ verified not available · ⏳ not yet tested
 | 1 | App renders | Title, toolbar and empty asset list appear |
 | 2 | Network blocked | Console: `fetch("https://example.com")` rejects with a CSP error |
 | 3 | No CSP violations | Console shows none after steps 4–9 |
-| 4 | Save (download) | Add an asset, Ctrl/⌘+S → `.gdtproj` downloads, status shows "Saved" |
+| 4 | Save (download) | Add an asset, Ctrl/⌘+S → `.json` downloads (before 2026-11-07: `.gdtproj`), status shows "Saved" |
 | 5 | Open file | Open… → pick the downloaded file → assets are back |
 | 6 | Crash recovery | Edit, wait 2 s, reload → "Restore" banner → Restore brings the edit back |
 | 7 | Recovery after moving the file | Move/rename the HTML file, open it → is the banner still there? (expected to differ per browser) |
@@ -67,6 +67,16 @@ Legend: ✅ verified working · ❌ verified not available · ⏳ not yet tested
 | 11 Touch | ⏳ | ⏳ (Pixel 7 emulation ✅) |
 
 ## Notes
+
+- **2026-11-07, Chromium (headless, Playwright outside the repo), file://:** checks 4 and
+  5 with the `.json` extension: the picker accepts `.json,.gdtproj,application/json`; a
+  legacy `.gdtproj` opens and Save downloads it as `.json` with identical content; the
+  `.json` download opens again; a project named "GameDevTool" downloads as
+  `GameDevTool-project.json`; a folder's `gamedevtool.json` picked with Open… shows the
+  folder-manifest message and leaves the open project as it was. Also verified: the
+  issues panel with 3,000 capped issues (badge, 100 listed, hidden count, capped note) and
+  the row/table delete confirmations against the reference index, including after cell
+  edits, undo and redo.
 
 - **2026-11-05, Chromium (headless, Playwright outside the repo), file://:** check 13:
   example chain renders 6 nodes with rate labels, supply-driven mode marks MineIronOre as

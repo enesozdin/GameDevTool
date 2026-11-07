@@ -5,9 +5,13 @@ import {
   buildReferenceIndex,
   createEmptyProject,
   CURRENT_SCHEMA_VERSION,
+  FOLDER_MANIFEST_FILE,
   loadProject,
   migrateProject,
+  projectFileName,
+  savedFileName,
   saveProject,
+  stableStringify,
   validateProject,
   type Migration,
   type Project,
@@ -41,7 +45,7 @@ describe("project model", () => {
   });
 
   it(`loads the v${CURRENT_SCHEMA_VERSION} fixture unchanged`, async () => {
-    const text = await readFile(new URL(`../fixtures/project.v${CURRENT_SCHEMA_VERSION}.gdtproj`, import.meta.url), "utf8");
+    const text = await readFile(new URL(`../fixtures/project.v${CURRENT_SCHEMA_VERSION}.json`, import.meta.url), "utf8");
     const loaded = loadProject(text);
     assert.ok(loaded.ok, JSON.stringify(!loaded.ok && loaded.error));
     assert.deepEqual(loaded.value.issues, []);
@@ -74,6 +78,33 @@ describe("project model", () => {
   it("rejects files that are not projects", () => {
     const loaded = loadProject('{"hello": "world"}');
     assert.ok(!loaded.ok && loaded.error.code === "not-a-project");
+  });
+
+  it("recognizes a project folder's manifest opened as a project file", () => {
+    const manifest = stableStringify(sampleProject().manifest);
+    const loaded = loadProject(manifest);
+    assert.ok(!loaded.ok && loaded.error.code === "folder-manifest");
+  });
+});
+
+describe("project file names", () => {
+  it("derives a safe .json name from the project name", () => {
+    assert.equal(projectFileName("Sample"), "Sample.json");
+    assert.equal(projectFileName('a/b:c*?"<>|d'), "a_b_c______d.json");
+    assert.equal(projectFileName("  ..  "), "project.json");
+  });
+
+  it("never names a project like a folder manifest", () => {
+    assert.equal(FOLDER_MANIFEST_FILE, "gamedevtool.json");
+    assert.equal(projectFileName("GameDevTool"), "GameDevTool-project.json");
+    assert.equal(projectFileName("gamedevtool"), "gamedevtool-project.json");
+  });
+
+  it("saves a project opened from a legacy .gdtproj file as .json", () => {
+    assert.equal(savedFileName("Old.gdtproj"), "Old.json");
+    assert.equal(savedFileName("Old.GDTPROJ"), "Old.json");
+    assert.equal(savedFileName("Game.json"), "Game.json");
+    assert.equal(savedFileName(".gdtproj"), ".gdtproj");
   });
 });
 

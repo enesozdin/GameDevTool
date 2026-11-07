@@ -17,13 +17,12 @@
  * unless the caller confirms.
  */
 import { ULID_PATTERN } from "../ids.ts";
-import { DEFAULT_JSON_LIMITS, parseUntrustedJsonCounted, stableStringify, type JsonLimits, type JsonValue } from "../json.ts";
+import { DEFAULT_JSON_LIMITS, isJsonObject, parseUntrustedJsonCounted, stableStringify, type JsonLimits, type JsonValue } from "../json.ts";
 import type { Id } from "../model/primitives.ts";
 import { MAX_ASSETS, type Asset, type Manifest, type Project } from "../model/project.ts";
 import { err, ok, type Result } from "../result.ts";
+import { FOLDER_MANIFEST_FILE } from "./file-names.ts";
 import { loadProjectJson, type LoadedProject, type LoadError, type LoadOptions } from "./project-file.ts";
-
-export const FOLDER_MANIFEST_FILE = "gamedevtool.json";
 export const FOLDER_ASSETS_DIR = "assets";
 
 const ASSET_FILE_PATTERN = new RegExp(`^(${ULID_PATTERN.source.slice(1, -1)})\\.json$`);
@@ -85,6 +84,8 @@ export interface FolderSession {
 export type FolderLoadError =
   | (LoadError & { readonly file?: string })
   | { readonly code: "no-project" }
+  /** FOLDER_MANIFEST_FILE holds a whole project file, not a manifest (e.g. a renamed download). */
+  | { readonly code: "single-file-project"; readonly file: string }
   | { readonly code: "read-failed"; readonly file?: string }
   | { readonly code: "too-many-files"; readonly limit: number }
   /** The asset id inside the file does not match the file name (e.g. a copied file). */
@@ -100,7 +101,7 @@ export interface OpenedFolder {
 // ---------------------------------------------------------------------------------------
 
 /**
- * Reads a project folder. Files are untrusted, exactly like a `.gdtproj`: the same limits
+ * Reads a project folder. Files are untrusted, exactly like a project file: the same limits
  * apply to the folder as a whole (total size, total value count, nesting depth measured as
  * if the files were one document), followed by the same migrate → schema → validate steps.
  * Assets are ordered by id, which is creation order.
@@ -164,6 +165,8 @@ export async function openProjectFolder(io: FolderIo, options: LoadOptions = {})
   // Depth offsets: in a single file the manifest sits at depth 2 and each asset at depth 3.
   const manifestRaw = parse(manifestText, 1, FOLDER_MANIFEST_FILE);
   if (!manifestRaw.ok) return manifestRaw;
+  const m = manifestRaw.value;
+  if (isJsonObject(m) && isJsonObject(m["manifest"]) && "assets" in m) return err({ code: "single-file-project", file: FOLDER_MANIFEST_FILE });
   const assetsRaw: JsonValue[] = [];
   for (let i = 0; i < assetTexts.length; i++) {
     const raw = parse(assetTexts[i]!, 2, paths[i]!);

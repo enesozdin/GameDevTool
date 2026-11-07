@@ -1,14 +1,14 @@
-import { DEFAULT_JSON_LIMITS, parseUntrustedJson, stableStringify, type JsonLimits, type JsonParseError, type JsonValue } from "../json.ts";
-import { ProjectSchema, type Project } from "../model/project.ts";
+import { DEFAULT_JSON_LIMITS, isJsonObject, parseUntrustedJson, stableStringify, type JsonLimits, type JsonParseError, type JsonValue } from "../json.ts";
+import { PROJECT_FORMAT, ProjectSchema, type Project } from "../model/project.ts";
 import { validateProject } from "../model/validate.ts";
 import { err, ok, type Issue, type Result } from "../result.ts";
 import { migrateProject, MIGRATIONS, type Migration, type MigrationError } from "./migrations.ts";
 
-export const PROJECT_FILE_EXTENSION = ".gdtproj";
-
 export type LoadError =
   | JsonParseError
   | MigrationError
+  /** The file is a project folder's manifest (FOLDER_MANIFEST_FILE), not a project file. */
+  | { readonly code: "folder-manifest" }
   /** The file does not match the schema. `issues` lists the first problems found. */
   | { readonly code: "schema"; readonly issues: readonly Issue[] };
 
@@ -28,14 +28,17 @@ export interface LoadOptions {
 const MAX_SCHEMA_ISSUES = 100;
 
 /**
- * Loads a `.gdtproj` file. The text is untrusted: it is parsed with size/depth limits and
- * forbidden-key checks, migrated, then validated by the schema (which also strips unknown
- * keys). Nothing in the file is ever executed.
+ * Loads a project file (`.json`, or legacy `.gdtproj`). The text is untrusted: it is parsed
+ * with size/depth limits and forbidden-key checks, migrated, then validated by the schema
+ * (which also strips unknown keys). Nothing in the file is ever executed.
  */
 export function loadProject(text: string, options: LoadOptions = {}): Result<LoadedProject, LoadError> {
   const parsed = parseUntrustedJson(text, options.limits ?? DEFAULT_JSON_LIMITS);
   if (!parsed.ok) return parsed;
-  return loadProjectJson(parsed.value, options.migrations);
+  // Both are .json files: say which one this is instead of "not a project".
+  const raw = parsed.value;
+  if (isJsonObject(raw) && raw["format"] === PROJECT_FORMAT && !("manifest" in raw)) return err({ code: "folder-manifest" });
+  return loadProjectJson(raw, options.migrations);
 }
 
 /**
