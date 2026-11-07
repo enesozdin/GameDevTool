@@ -19,6 +19,9 @@ import { KEYWORDS } from "../expr/syntax.ts";
  * With a cache (one per project history, like the editor's), the checks are updated from
  * the previous call: unchanged assets keep their findings, and an edited table re-checks
  * only its changed rows. The result is the same as without a cache.
+ *
+ * At most MAX_ISSUES_PER_CODE issues of each code are listed (the first ones, in report
+ * order); one ISSUES_TRUNCATED issue per capped code then says how many were left out.
  */
 export function validateProject(project: Project, index: ReferenceIndex = buildReferenceIndex(project), cache: ValidationCache = createValidationCache()): Issue[] {
   const variables = project.manifest.variables;
@@ -71,11 +74,11 @@ export function validateProject(project: Project, index: ReferenceIndex = buildR
   for (const [id, check] of cache.tables) if (!usedTables.has(check)) cache.tables.delete(id);
 
   // Pass 2: report in project order. A duplicate is reported at every claim but the first.
-  const issues: Issue[] = [];
+  const issues = new IssueCollector();
   const ids = new ClaimReplay(cache.ids.duplicates);
   const locKeys = new ClaimReplay(cache.locKeys.duplicates);
   const claimId: ClaimId = (id, path) => {
-    if (ids.isDuplicate(id)) issues.push({ severity: "error", code: "duplicate-id", path: path(), params: { id } });
+    if (ids.isDuplicate(id)) issues.lazy("error", "duplicate-id", () => ({ severity: "error", code: "duplicate-id", path: path(), params: { id } }));
   };
   checkManifest(project.manifest, claimId, issues);
   project.assets.forEach((asset, assetIndex) => {
@@ -90,7 +93,8 @@ export function validateProject(project: Project, index: ReferenceIndex = buildR
     if (ids.active) {
       let paths: ClaimPaths | undefined;
       check.check.ids.forEach((id, k) => {
-        if (ids.isDuplicate(id)) issues.push({ severity: "error", code: "duplicate-id", path: (paths ??= claimPaths(check.claims))[k]!(), params: { id } });
+        if (!ids.isDuplicate(id)) return;
+        issues.lazy("error", "duplicate-id", () => ({ severity: "error", code: "duplicate-id", path: (paths ??= claimPaths(check.claims))[k]!(), params: { id } }));
       });
     }
   });
@@ -98,12 +102,67 @@ export function validateProject(project: Project, index: ReferenceIndex = buildR
   checkDocumentCycles(project, issues);
 
   for (const ref of index.broken) {
-    issues.push({ severity: "error", code: "broken-reference", path: ref.path, params: { target: ref.target } });
+    issues.lazy("error", "broken-reference", () => ({ severity: "error", code: "broken-reference", path: ref.path, params: { target: ref.target } }));
   }
-  return issues;
+  return issues.finish();
 }
 
-function checkManifest(manifest: Manifest, claimId: ClaimId, issues: Issue[]): void {
+/**
+ * Most issues listed per code. A crafted file can produce hundreds of thousands of one
+ * finding (e.g. duplicate ids); beyond this, they are counted, not listed.
+ */
+export const MAX_ISSUES_PER_CODE = 1_000;
+
+/**
+ * Code of the issue added once per capped code, after all others.
+ * params: `code` (the capped code) and `omitted` (how many of it are not listed).
+ */
+export const ISSUES_TRUNCATED = "issues-truncated";
+
+/** Where checks add issues: an array, or the capped project list. */
+interface IssueSink {
+  push(issue: Issue): unknown;
+}
+
+/**
+ * The project's issue list, capped per code. Issues are kept in report order, so the
+ * listed ones are the first of each code: the same with or without a cache.
+ */
+class IssueCollector implements IssueSink {
+  private readonly list: Issue[] = [];
+  private readonly counts = new Map<string, number>();
+  private readonly omitted = new Map<string, { readonly severity: Issue["severity"]; count: number }>();
+
+  push(issue: Issue): void {
+    const n = this.counts.get(issue.code) ?? 0;
+    if (n < MAX_ISSUES_PER_CODE) {
+      this.counts.set(issue.code, n + 1);
+      this.list.push(issue);
+    } else this.omit(issue.severity, issue.code);
+  }
+
+  /** Like push, but builds the issue (and its path) only when it is listed. */
+  lazy(severity: Issue["severity"], code: string, make: () => Issue): void {
+    if ((this.counts.get(code) ?? 0) < MAX_ISSUES_PER_CODE) this.push(make());
+    else this.omit(severity, code);
+  }
+
+  private omit(severity: Issue["severity"], code: string): void {
+    const omitted = this.omitted.get(code);
+    if (omitted !== undefined) omitted.count++;
+    else this.omitted.set(code, { severity, count: 1 });
+  }
+
+  /** The list, with one ISSUES_TRUNCATED issue per capped code at the end. */
+  finish(): Issue[] {
+    for (const [code, { severity, count }] of this.omitted) {
+      this.list.push({ severity, code: ISSUES_TRUNCATED, path: [], params: { code, omitted: count } });
+    }
+    return this.list;
+  }
+}
+
+function checkManifest(manifest: Manifest, claimId: ClaimId, issues: IssueSink): void {
   claimId(manifest.id, () => ["manifest", "id"]);
 
   // Variables
@@ -315,7 +374,7 @@ class NameSet {
 
 type ClaimId = (id: Id, path: () => IssuePath) => void;
 
-function checkEnumOptions(options: readonly EnumOption[], path: IssuePath, claimId: ClaimId, issues: Issue[]): void {
+function checkEnumOptions(options: readonly EnumOption[], path: IssuePath, claimId: ClaimId, issues: IssueSink): void {
   const names = new NameSet();
   options.forEach((option, i) => {
     claimId(option.id, () => [...path, i, "id"]);
@@ -562,7 +621,7 @@ class TableCheck {
     return findings;
   }
 
-  report(issues: Issue[], ids: ClaimReplay, locKeys: ClaimReplay): void {
+  report(issues: IssueCollector, ids: ClaimReplay, locKeys: ClaimReplay): void {
     const table = this.table!;
     for (const issue of this.header) issues.push(issue);
     this.reportRows(table, issues);
@@ -585,11 +644,13 @@ class TableCheck {
       let paths: ClaimPaths | undefined;
       this.headerIds.forEach((id, k) => {
         if (!ids.isDuplicate(id)) return;
-        paths ??= claimPaths((claim) => checkHeader(table, this.assetIndex, claim, []));
-        issues.push({ severity: "error", code: "duplicate-id", path: paths[k]!(), params: { id } });
+        issues.lazy("error", "duplicate-id", () => {
+          paths ??= claimPaths((claim) => checkHeader(table, this.assetIndex, claim, []));
+          return { severity: "error", code: "duplicate-id", path: paths[k]!(), params: { id } };
+        });
       });
       table.rows.forEach((row, r) => {
-        if (ids.isDuplicate(row.id)) issues.push({ severity: "error", code: "duplicate-id", path: [...base, "rows", r, "id"], params: { id: row.id } });
+        if (ids.isDuplicate(row.id)) issues.lazy("error", "duplicate-id", () => ({ severity: "error", code: "duplicate-id", path: [...base, "rows", r, "id"], params: { id: row.id } }));
       });
     }
     if (locKeys.active) {
@@ -597,7 +658,7 @@ class TableCheck {
         for (const column of this.layout.textColumns) {
           const value = row.cells[column];
           if (isText(value) && locKeys.isDuplicate(value.key)) {
-            issues.push({ severity: "error", code: "duplicate-loc-key", path: [...base, "rows", r, "cells", column], params: { key: value.key } });
+            issues.lazy("error", "duplicate-loc-key", () => ({ severity: "error", code: "duplicate-loc-key", path: [...base, "rows", r, "cells", column], params: { key: value.key } }));
           }
         }
       });
@@ -605,7 +666,7 @@ class TableCheck {
   }
 
   /** Row findings in row order. Rows with a duplicate name or value are checked again. */
-  private reportRows(table: TableAsset, issues: Issue[]): void {
+  private reportRows(table: TableAsset, issues: IssueSink): void {
     const names = this.names.duplicates;
     const unique = this.layout.unique
       .map((c) => ({ c, id: table.columns[c]!.id }))
@@ -651,7 +712,7 @@ class TableCheck {
 }
 
 /** Column findings and claims (column ids, enum option ids). */
-function checkHeader(table: TableAsset, assetIndex: number, claimId: ClaimId, issues: Issue[]): void {
+function checkHeader(table: TableAsset, assetIndex: number, claimId: ClaimId, issues: IssueSink): void {
   const base: IssuePath = ["assets", assetIndex];
   const columnNames = new NameSet();
   table.columns.forEach((column, c) => {
@@ -667,7 +728,7 @@ function checkHeader(table: TableAsset, assetIndex: number, claimId: ClaimId, is
  * Checks one row against the columns. `duplicates` is undefined when the row has no
  * duplicate name or value; such findings are added in column order otherwise.
  */
-function checkRow(layout: TableLayout, row: Row, at: CellLocation, issues: Issue[], duplicates: RowDuplicates | undefined): void {
+function checkRow(layout: TableLayout, row: Row, at: CellLocation, issues: IssueSink, duplicates: RowDuplicates | undefined): void {
   const r = at.row;
   if (duplicates?.name === true) {
     issues.push({ severity: "error", code: "duplicate-name", path: [...at.base, "rows", r, "name"], params: { name: row.name } });
@@ -803,7 +864,7 @@ function itemTags(items: Asset | undefined): Set<string> {
   return out;
 }
 
-function checkColumnType(type: ColumnType, path: IssuePath, claimId: ClaimId, issues: Issue[]): void {
+function checkColumnType(type: ColumnType, path: IssuePath, claimId: ClaimId, issues: IssueSink): void {
   if (type.kind === "list") {
     checkColumnType(type.item, [...path, "item"], claimId, issues);
     return;
@@ -825,7 +886,7 @@ function cellPath(at: CellLocation, ...rest: (string | number)[]): IssuePath {
   return [...at.base, "rows", at.row, "cells", at.column, ...rest];
 }
 
-function checkCell(type: ColumnType, value: Exclude<CellValue, null>, at: CellLocation, issues: Issue[]): void {
+function checkCell(type: ColumnType, value: Exclude<CellValue, null>, at: CellLocation, issues: IssueSink): void {
   switch (type.kind) {
     case "text": {
       if (typeof value !== "object" || Array.isArray(value) || !("source" in value)) {
@@ -892,7 +953,7 @@ function checkCell(type: ColumnType, value: Exclude<CellValue, null>, at: CellLo
 }
 
 /** `listIndex` is set when the value is an item of a list cell. */
-function checkScalar(type: ScalarType, value: Exclude<CellValue, null>, at: CellLocation, listIndex: number | undefined, issues: Issue[]): void {
+function checkScalar(type: ScalarType, value: Exclude<CellValue, null>, at: CellLocation, listIndex: number | undefined, issues: IssueSink): void {
   switch (type.kind) {
     case "int":
     case "float": {
@@ -933,7 +994,7 @@ function mismatch(path: IssuePath, expected: string): Issue {
   return { severity: "error", code: "type-mismatch", path, params: { expected } };
 }
 
-function checkDocumentCycles(project: Project, issues: Issue[]): void {
+function checkDocumentCycles(project: Project, issues: IssueSink): void {
   const parentOf = new Map<Id, Id>();
   const indexOf = new Map<Id, number>();
   project.assets.forEach((asset, i) => {

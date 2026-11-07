@@ -1,5 +1,5 @@
 import type { Asset, Change, Id, IdGenerator, Issue, Project } from "../core/index.ts";
-import { isValidName } from "../core/index.ts";
+import { ISSUES_TRUNCATED, isValidName, MAX_ISSUES_PER_CODE } from "../core/index.ts";
 import { NameField } from "../ui/components/NameField.tsx";
 import type { UiStrings } from "../ui/strings.ts";
 import { VariablesPanel } from "../ui/variables/VariablesPanel.tsx";
@@ -53,14 +53,21 @@ export function ProjectPanel({ strings, project, target, issues, newId, commit, 
 
 function IssueList({ strings, project, issues, onSelectAsset }: Pick<ProjectPanelProps, "strings" | "project" | "issues" | "onSelectAsset">) {
   const s = strings.issues;
-  const shown = issues.slice(0, MAX_LISTED_ISSUES);
+  // validateProject lists at most MAX_ISSUES_PER_CODE of each code and adds one
+  // ISSUES_TRUNCATED issue per capped code, at the end, with the number left out.
+  const firstTruncated = issues.findIndex((issue) => issue.code === ISSUES_TRUNCATED);
+  const listed = firstTruncated < 0 ? issues : issues.slice(0, firstTruncated);
+  let omitted = 0;
+  for (let i = listed.length; i < issues.length; i++) omitted += Number(issues[i]!.params?.omitted ?? 0);
+  const total = listed.length + omitted;
+  const shown = listed.slice(0, MAX_LISTED_ISSUES);
   return (
     <section className="card" aria-labelledby="issues-heading">
       <h2 id="issues-heading">
         {s.heading}
-        {issues.length > 0 && <span className="badge">{s.count(issues.length)}</span>}
+        {total > 0 && <span className="badge">{s.count(total)}</span>}
       </h2>
-      {issues.length === 0 ? (
+      {total === 0 ? (
         <p className="muted">{s.none}</p>
       ) : (
         <ul className="issues">
@@ -83,7 +90,8 @@ function IssueList({ strings, project, issues, onSelectAsset }: Pick<ProjectPane
           })}
         </ul>
       )}
-      {issues.length > shown.length && <p className="muted">{s.moreHidden(issues.length - shown.length)}</p>}
+      {total > shown.length && <p className="muted">{s.moreHidden(total - shown.length)}</p>}
+      {omitted > 0 && <p className="muted">{s.capped(MAX_ISSUES_PER_CODE)}</p>}
     </section>
   );
 }

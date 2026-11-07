@@ -8,6 +8,8 @@ import {
   commit,
   ConditionCompiler,
   createEmptyProject,
+  ISSUES_TRUNCATED,
+  MAX_ISSUES_PER_CODE,
   createHistory,
   createProductionSample,
   createReferenceIndexCache,
@@ -26,6 +28,7 @@ import {
   type Change,
   type History,
   type Id,
+  type Issue,
   type ProductionGraphAsset,
   type Project,
   type ReferenceIndex,
@@ -232,11 +235,14 @@ describe("duplicate ids in crafted files", () => {
     }));
     project.assets.push({ id: newId(), kind: "table", name: "T", columns, rows: [] });
     const start = performance.now();
-    const duplicates = validateProject(project).filter((i) => i.code === "duplicate-id");
+    const issues = validateProject(project);
     assert.ok(performance.now() - start < LIMIT_MS);
-    assert.equal(duplicates.length, N - 1);
+    const duplicates = issues.filter((i) => i.code === "duplicate-id");
+    assert.equal(duplicates.length, MAX_ISSUES_PER_CODE);
     assert.deepEqual(duplicates[0]!.path, ["assets", 0, "columns", 0, "type", "options", 1, "id"]);
-    assert.deepEqual(duplicates.at(-1)!.path, ["assets", 0, "columns", N / 1_000 - 1, "type", "options", 999, "id"]);
+    // The first 999 options of column 0 after the first one, then column 1's first option.
+    assert.deepEqual(duplicates.at(-1)!.path, ["assets", 0, "columns", 1, "type", "options", 0, "id"]);
+    assert.deepEqual(issues.at(-1), { severity: "error", code: ISSUES_TRUNCATED, path: [], params: { code: "duplicate-id", omitted: N - 1 - MAX_ISSUES_PER_CODE } });
   });
 
   it("reports duplicate graph node ids at each later node, in linear time", () => {
@@ -246,12 +252,67 @@ describe("duplicate ids in crafted files", () => {
     const nodes = Array.from({ length: N }, (_, i) => ({ ...node, position: { x: i, y: 0 } }));
     const crafted: Project = { ...project, assets: project.assets.map((a) => (a === graph ? { ...graph, nodes, edges: [] } : a)) };
     const start = performance.now();
-    const duplicates = validateProject(crafted).filter((i) => i.code === "duplicate-id");
+    const issues = validateProject(crafted);
     assert.ok(performance.now() - start < LIMIT_MS);
-    assert.equal(duplicates.length, N - 1);
+    const duplicates = issues.filter((i) => i.code === "duplicate-id");
+    assert.equal(duplicates.length, MAX_ISSUES_PER_CODE);
     const at = crafted.assets.indexOf(crafted.assets.find((a) => a.kind === "production-graph")!);
     assert.deepEqual(duplicates[0]!.path, ["assets", at, "nodes", 1, "id"]);
-    assert.deepEqual(duplicates.at(-1)!.path, ["assets", at, "nodes", N - 1, "id"]);
+    assert.deepEqual(duplicates.at(-1)!.path, ["assets", at, "nodes", MAX_ISSUES_PER_CODE, "id"]);
+    const truncated = issues.filter((i) => i.code === ISSUES_TRUNCATED);
+    assert.deepEqual(truncated.find((i) => i.params?.code === "duplicate-id")?.params?.omitted, N - 1 - MAX_ISSUES_PER_CODE);
+  });
+});
+
+describe("issue cap", () => {
+  it("lists the first issues of each code, the same with and without a cache, as edits move them", () => {
+    const newId = fixedIds(21);
+    const project = createEmptyProject("P", newId);
+    const required = newId();
+    const level = newId();
+    const rows = Array.from({ length: 1_500 }, (_, i) => ({ id: newId(), name: `R${i}`, cells: { [level]: -1 } }));
+    const table: TableAsset = {
+      id: newId(),
+      kind: "table",
+      name: "T",
+      columns: [
+        { id: required, name: "Name", required: true, type: { kind: "string" } },
+        { id: level, name: "Level", type: { kind: "int", min: 0 } },
+      ],
+      rows,
+    };
+    project.assets.push(table);
+    const cache = createValidationCache();
+    const indexCache = createReferenceIndexCache();
+    const check = (p: Project): Issue[] => {
+      const issues = validateProject(p, buildReferenceIndex(p, indexCache), cache);
+      assert.deepEqual(issues, validateProject(p));
+      return issues;
+    };
+
+    let issues = check(project);
+    // 1,500 rows, each missing its required value and out of range: two capped codes.
+    assert.equal(issues.filter((i) => i.code === "required-missing").length, MAX_ISSUES_PER_CODE);
+    assert.equal(issues.filter((i) => i.code === "out-of-range").length, MAX_ISSUES_PER_CODE);
+    assert.deepEqual(
+      issues.filter((i) => i.code === ISSUES_TRUNCATED).map((i) => i.params),
+      [
+        { code: "required-missing", omitted: 500 },
+        { code: "out-of-range", omitted: 500 },
+      ],
+    );
+
+    // Fixing the first rows moves later rows into the list.
+    let p = project;
+    for (let r = 0; r < 600; r++) p = apply(p, setCell(p, table.id, rows[r]!.id, required, "x"));
+    issues = check(p);
+    assert.deepEqual(issues.filter((i) => i.code === "required-missing")[0]!.path, ["assets", 0, "rows", 600, "cells", required]);
+    assert.deepEqual(issues.filter((i) => i.code === ISSUES_TRUNCATED).map((i) => i.params), [{ code: "out-of-range", omitted: 500 }]);
+    // Removing rows from the start shifts every listed path.
+    p = apply(p, removeRows(p, table.id, new Set(rows.slice(0, 700).map((r) => r.id))));
+    issues = check(p);
+    assert.deepEqual(issues.filter((i) => i.code === ISSUES_TRUNCATED), []);
+    assert.equal(issues.length, 800 + 800);
   });
 });
 

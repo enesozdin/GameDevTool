@@ -136,6 +136,7 @@ export const en = {
     none: "No problems found.",
     count: (n: number) => `${n} ${n === 1 ? "problem" : "problems"}`,
     moreHidden: (n: number) => `${n} more not shown.`,
+    capped: (n: number) => `Only the first ${n} problems of each kind are listed.`,
     severity: { error: "Error", warning: "Warning" } as Record<string, string>,
     codes: {
       "duplicate-id": "Duplicate ID",
