@@ -145,6 +145,7 @@ describe("incremental validation and reference index", () => {
     edit((p) => setCell(p, items.id, items.rows[1]!.id, name, { key: "item.iron_ore", source: "Copy" })); // duplicate loc key
     edit((p) => addRow(p, big.id, { id: fixedIds(99)(), name: "recipe_7", cells: {} })); // duplicate name, required missing
     edit((p) => removeRows(p, big.id, new Set([row(0), row(150), row(299)]))); // scattered: paths shift
+    edit(() => ({ label: "insert-row", patches: [{ op: "insert", path: ["assets", 1, "rows"], index: 120, value: { id: fixedIds(77)(), name: "Inserted", cells: { [output!]: items.rows[0]!.id } } }] }));
     edit((p) => setCell(p, big.id, row(10), output!, fixedIds(123)())); // broken reference
     edit((p) => removeRows(p, items.id, new Set([items.rows[0]!.id]))); // breaks references into the items table
     h = undo(undo(h));

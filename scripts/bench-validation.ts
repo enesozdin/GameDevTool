@@ -102,4 +102,8 @@ measure("edit one cell", (p, e) => setCell(p, big.id, bigRows(p)[(e * 7_919) % R
 // Removals first: 200,000 rows is the table limit, so appending needs room.
 measure("remove the last row", (p) => removeRows(p, big.id, new Set([bigRows(p).at(-1)!.id])));
 measure("remove a middle row", (p) => removeRows(p, big.id, new Set([bigRows(p)[Math.floor(bigRows(p).length / 2)]!.id])));
+measure("insert a middle row", (p, e) => ({
+  label: "insert-row",
+  patches: [{ op: "insert", path: ["assets", 1, "rows"], index: Math.floor(bigRows(p).length / 2), value: { id: newId(), name: `Inserted_${e}`, cells: { [colLevel]: e } } }],
+}));
 measure("append a row", (p, e) => addRow(p, big.id, { id: newId(), name: `Added_${e}`, cells: { [colLevel]: e } }));

@@ -95,26 +95,30 @@ function refColumns(table: TableAsset): RefColumnSpec[] {
   return out;
 }
 
-function columnReference(table: TableAsset, assetIndex: number, spec: RefColumnSpec): Reference {
-  return { kind: "column-table", source: table.id, path: ["assets", assetIndex, "columns", spec.index, "type"], target: spec.targetTable };
+function columnReference(source: Id, assetIndex: number, spec: RefColumnSpec): Reference {
+  return { kind: "column-table", source, path: ["assets", assetIndex, "columns", spec.index, "type"], target: spec.targetTable };
 }
 
-/** References stored in one cell, in path order. */
-function cellReferences(source: Id, assetIndex: number, rowIndex: number, spec: RefColumnSpec, value: CellValue | undefined, out: Reference[]): void {
-  const columnId = spec.column.id;
-  const targetTable = spec.targetTable;
+/**
+ * Row ids stored in one cell, in path order. `item` is the list index (-1 for a plain
+ * reference cell), `stack` whether the id is the `item` field of a stack.
+ */
+function forEachCellTarget(spec: RefColumnSpec, value: CellValue | undefined, fn: (target: Id, item: number, stack: boolean) => void): void {
   // Non-string values are type errors, reported by validate.ts, not references.
-  if (typeof value === "string") {
-    out.push({ kind: "cell-row", source, path: ["assets", assetIndex, "rows", rowIndex, "cells", columnId], target: value, targetTable });
-  } else if (Array.isArray(value)) {
+  if (typeof value === "string") fn(value, -1, false);
+  else if (Array.isArray(value)) {
     value.forEach((item, itemIndex) => {
-      const path = ["assets", assetIndex, "rows", rowIndex, "cells", columnId, itemIndex];
-      if (typeof item === "string") out.push({ kind: "cell-row", source, path, target: item, targetTable });
-      else if (spec.column.type.kind === "stacks" && item !== null && typeof item === "object" && "item" in item) {
-        out.push({ kind: "cell-row", source, path: [...path, "item"], target: item.item, targetTable });
-      }
+      if (typeof item === "string") fn(item, itemIndex, false);
+      else if (spec.column.type.kind === "stacks" && item !== null && typeof item === "object" && "item" in item) fn(item.item, itemIndex, true);
     });
   }
+}
+
+function cellReference(source: Id, assetIndex: number, rowIndex: number, spec: RefColumnSpec, target: Id, item: number, stack: boolean): Reference {
+  const path: (string | number)[] = ["assets", assetIndex, "rows", rowIndex, "cells", spec.column.id];
+  if (item >= 0) path.push(item);
+  if (stack) path.push("item");
+  return { kind: "cell-row", source, path, target, targetTable: spec.targetTable };
 }
 
 function documentReferences(asset: Asset, assetIndex: number, out: Reference[]): void {
@@ -169,8 +173,10 @@ function buildFull(project: Project): ReferenceIndex {
       return;
     }
     for (const spec of refColumns(asset)) {
-      references.push(columnReference(asset, assetIndex, spec));
-      asset.rows.forEach((row, rowIndex) => cellReferences(asset.id, assetIndex, rowIndex, spec, row.cells[spec.column.id], references));
+      references.push(columnReference(asset.id, assetIndex, spec));
+      asset.rows.forEach((row, rowIndex) => {
+        forEachCellTarget(spec, row.cells[spec.column.id], (target, item, stack) => references.push(cellReference(asset.id, assetIndex, rowIndex, spec, target, item, stack)));
+      });
     }
   });
 
@@ -190,33 +196,91 @@ function buildFull(project: Project): ReferenceIndex {
   };
 }
 
+
 // ---------------------------------------------------------------------------------------
 // Incremental build. Per asset, the references are kept as a unit: documents and graphs
-// by object, tables by id with their references per cell, so an edit re-collects only the
+// by object, tables by id with their references per row, so an edit re-collects only the
 // changed rows (rowDiff). Row owners, references by target and the broken set are updated
-// from the changes. Duplicate asset, row or column ids (already validation errors) fall back to
+// from the changes. Duplicate asset or row ids (already validation errors) fall back to
 // the full build, which defines the exact semantics.
+//
+// Table references are kept without paths: each points to its row's slot, which holds the
+// current row index. Removing or inserting a row then only renumbers the slots after it,
+// and moving a table in the asset list renumbers nothing. Reference objects with paths are
+// made when the index is read (broken, usedBy, references).
 // ---------------------------------------------------------------------------------------
 
-/** References of one cell: most cells hold one, so no array then. */
-type CellRefs = Reference | readonly Reference[] | null;
-
-function forEachRef(cell: CellRefs, fn: (ref: Reference) => void): void {
-  if (cell === null) return;
-  if (Array.isArray(cell)) for (const ref of cell as readonly Reference[]) fn(ref);
-  else fn(cell as Reference);
+/** A table's reference column. */
+interface RefColumn extends RefColumnSpec {
+  readonly unit: TableUnit;
+  /** Order among the table's reference columns. */
+  readonly ordinal: number;
+  readonly ref: ColumnRef;
 }
 
-function toCellRefs(refs: Reference[]): CellRefs {
-  return refs.length === 0 ? null : refs.length === 1 ? refs[0]! : refs;
+/** The column's reference to its target table. */
+class ColumnRef {
+  readonly column: RefColumn;
+  readonly target: Id;
+  constructor(column: RefColumn) {
+    this.column = column;
+    this.target = column.targetTable;
+  }
+}
+
+/**
+ * One row of a table that holds references. `index` follows the row when rows shift.
+ * Most rows hold one reference, which is then stored without an array.
+ */
+interface RowSlot {
+  index: number;
+  refs: CellRef | readonly CellRef[];
+}
+
+function forEachSlotRef(slot: RowSlot | null, fn: (ref: CellRef) => void): void {
+  if (slot === null) return;
+  if (slot.refs instanceof CellRef) fn(slot.refs);
+  else for (const ref of slot.refs) fn(ref);
+}
+
+/** A row id stored in a cell (see forEachCellTarget for `item` and `stack`). */
+class CellRef {
+  readonly slot: RowSlot;
+  readonly column: RefColumn;
+  readonly item: number;
+  readonly stack: boolean;
+  readonly target: Id;
+  constructor(slot: RowSlot, column: RefColumn, item: number, stack: boolean, target: Id) {
+    this.slot = slot;
+    this.column = column;
+    this.item = item;
+    this.stack = stack;
+    this.target = target;
+  }
+}
+
+/** What the incremental index stores: documents and graphs keep plain references. */
+type Entry = Reference | ColumnRef | CellRef;
+
+function materialize(entry: Entry): Reference {
+  if (entry instanceof CellRef) {
+    const unit = entry.column.unit;
+    return cellReference(unit.table.id, unit.assetIndex, entry.slot.index, entry.column, entry.target, entry.item, entry.stack);
+  }
+  if (entry instanceof ColumnRef) return columnReference(entry.column.unit.table.id, entry.column.unit.assetIndex, entry.column);
+  return entry;
+}
+
+function assetIndexOf(entry: Entry): number {
+  return entry instanceof CellRef || entry instanceof ColumnRef ? entry.column.unit.assetIndex : (entry.path[1] as number);
 }
 
 interface Unit {
   readonly assetIndex: number;
-  /** References in project order. */
-  forEach(fn: (ref: Reference) => void): void;
-  /** Order of two references of this unit. */
-  compare(a: Reference, b: Reference): number;
+  /** Entries in project order. */
+  forEach(fn: (entry: Entry) => void): void;
+  /** Entries in any order (cheaper). */
+  forEachEntry(fn: (entry: Entry) => void): void;
 }
 
 class StaticUnit implements Unit {
@@ -227,8 +291,11 @@ class StaticUnit implements Unit {
     this.assetIndex = assetIndex;
     this.refs = refs;
   }
-  forEach(fn: (ref: Reference) => void): void {
+  forEach(fn: (entry: Entry) => void): void {
     for (const ref of this.refs) fn(ref);
+  }
+  forEachEntry(fn: (entry: Entry) => void): void {
+    this.forEach(fn);
   }
   compare(a: Reference, b: Reference): number {
     if (this.positions === undefined) {
@@ -239,67 +306,64 @@ class StaticUnit implements Unit {
   }
 }
 
-interface RefColumn extends RefColumnSpec {
-  readonly ref: Reference;
-  /** Parallel to the table's rows. */
-  cells: CellRefs[];
-}
-
 class TableUnit implements Unit {
-  columns: RefColumn[] = [];
-  /** Column id and column index → order among the reference columns. */
-  private order = new Map<Id | number, number>();
   table: TableAsset;
   assetIndex: number;
+  columns: RefColumn[] = [];
+  /** Parallel to the table's rows; null for a row without references. */
+  slots: (RowSlot | null)[] = [];
+  private scratch: CellRef[] = [];
   constructor(table: TableAsset, assetIndex: number) {
     this.table = table;
     this.assetIndex = assetIndex;
   }
 
-  /** Collects everything. The caller adds the references to the index. */
+  /** Collects everything. The caller adds the entries to the index. */
   build(): void {
-    this.order.clear();
     this.columns = refColumns(this.table).map((spec, ordinal) => {
-      this.order.set(spec.column.id, ordinal);
-      this.order.set(spec.index, ordinal);
-      return { ...spec, ref: columnReference(this.table, this.assetIndex, spec), cells: this.collect(spec, 0, this.table.rows.length) };
+      const column: RefColumn = { ...spec, unit: this, ordinal, ref: undefined! };
+      (column as { ref: ColumnRef }).ref = new ColumnRef(column);
+      return column;
     });
+    this.slots = this.table.rows.map((row, r) => this.slot(row, r));
   }
 
-  collect(spec: RefColumnSpec, start: number, end: number): CellRefs[] {
-    const out: CellRefs[] = new Array(end - start);
-    const refs: Reference[] = [];
-    for (let r = start; r < end; r++) {
-      refs.length = 0;
-      cellReferences(this.table.id, this.assetIndex, r, spec, this.table.rows[r]!.cells[spec.column.id], refs);
-      out[r - start] = toCellRefs(refs.length > 1 ? refs.slice() : refs);
+  /** The references of one row, or null when it has none. */
+  slot(row: TableAsset["rows"][number], index: number): RowSlot | null {
+    const scratch = this.scratch;
+    scratch.length = 0;
+    const slot: RowSlot = { index, refs: scratch };
+    for (const column of this.columns) {
+      forEachCellTarget(column, row.cells[column.column.id], (target, item, stack) => scratch.push(new CellRef(slot, column, item, stack, target)));
     }
-    return out;
+    if (scratch.length === 0) return null;
+    // Sized exactly: a pushed-to array keeps spare capacity, which adds up over many rows.
+    slot.refs = scratch.length === 1 ? scratch[0]! : scratch.slice();
+    return slot;
   }
 
-  forEach(fn: (ref: Reference) => void): void {
+  forEach(fn: (entry: Entry) => void): void {
     for (const column of this.columns) {
       fn(column.ref);
-      for (const cell of column.cells) forEachRef(cell, fn);
+      for (const slot of this.slots) {
+        forEachSlotRef(slot, (ref) => {
+          if (ref.column === column) fn(ref);
+        });
+      }
     }
   }
 
-  compare(a: Reference, b: Reference): number {
-    const ka = this.key(a);
-    const kb = this.key(b);
-    return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2];
-  }
-
-  /** [reference column, row (-1 for the column itself), list item (-1 for none)]. */
-  private key(ref: Reference): [number, number, number] {
-    const p = ref.path;
-    if (p[2] === "columns") return [this.order.get(p[3]!)!, -1, -1];
-    return [this.order.get(p[5]!)!, p[3] as number, p.length > 6 ? (p[6] as number) : -1];
+  forEachEntry(fn: (entry: Entry) => void): void {
+    for (const column of this.columns) fn(column.ref);
+    for (const slot of this.slots) forEachSlotRef(slot, fn);
   }
 }
 
-function hasDuplicateColumnIds(table: TableAsset): boolean {
-  return new Set(table.columns.map((c) => c.id)).size !== table.columns.length;
+/** Order of two entries of the same table: column, then row, then list item. */
+function compareInTable(a: ColumnRef | CellRef, b: ColumnRef | CellRef): number {
+  const ka = a instanceof CellRef ? [a.column.ordinal, a.slot.index, a.item] : [a.column.ordinal, -1, -1];
+  const kb = b instanceof CellRef ? [b.column.ordinal, b.slot.index, b.item] : [b.column.ordinal, -1, -1];
+  return ka[0]! - kb[0]! || ka[1]! - kb[1]! || ka[2]! - kb[2]!;
 }
 
 /** Opaque cache for buildReferenceIndex across the edits of one project history. */
@@ -332,18 +396,15 @@ class IndexState {
   private assets = new Map<Id, Asset>();
   /** Row id → id of its table. Row ids are unique while this state exists. */
   private owners = new Map<Id, Id>();
-  /** Target id → references to it. One reference is stored without a Set. */
-  private targets = new Map<Id, Reference | Set<Reference>>();
-  private broken = new Set<Reference>();
+  /** Target id → entries pointing to it. One entry is stored without a Set. */
+  private targets = new Map<Id, Entry | Set<Entry>>();
+  private broken = new Set<Entry>();
   private tables = new Map<Id, TableUnit>();
   private statics = new WeakMap<Asset, StaticUnit>();
   private units: Unit[] = [];
   private version = 0;
 
-  /**
-   * Returns null (and must be discarded) when the project has duplicate asset, row or
-   * column ids: references can then no longer be told apart by their paths.
-   */
+  /** Returns null (and must be discarded) when the project has duplicate asset or row ids. */
   update(project: Project): ReferenceIndex | null {
     const assets = new Map<Id, Asset>();
     for (const asset of project.assets) {
@@ -356,10 +417,9 @@ class IndexState {
     const units: Unit[] = new Array(project.assets.length);
     const added: Unit[] = [];
     const changes: RowChange[] = [];
-    /** Kept table units whose columns or position changed: all references are re-collected. */
+    /** Kept table units whose columns changed: all entries are re-collected. */
     const rebuilt = new Set<TableUnit>();
-    for (let i = 0; i < project.assets.length; i++) {
-      const asset = project.assets[i]!;
+    project.assets.forEach((asset, i) => {
       if (asset.kind !== "table") {
         let unit = this.statics.get(asset);
         if (unit === undefined || unit.assetIndex !== i || !previous.has(unit)) {
@@ -368,26 +428,22 @@ class IndexState {
           added.push(unit);
         }
         units[i] = unit;
-        continue;
+        return;
       }
       let unit = this.tables.get(asset.id);
       if (unit === undefined || !previous.has(unit)) {
-        if (hasDuplicateColumnIds(asset)) return null;
         unit = new TableUnit(asset, i);
         this.tables.set(asset.id, unit);
         added.push(unit);
-      } else if (unit.table !== asset || unit.assetIndex !== i) {
-        if (unit.table.columns !== asset.columns || unit.assetIndex !== i) {
-          if (hasDuplicateColumnIds(asset)) return null;
-          rebuilt.add(unit);
-        }
+      } else if (unit.table !== asset) {
+        if (unit.table.columns !== asset.columns) rebuilt.add(unit);
         if (unit.table.rows !== asset.rows) {
           const d = rowDiff(unit.table.rows, asset.rows);
           changes.push({ unit, table: asset, start: d.start, beforeEnd: d.beforeEnd, afterEnd: d.afterEnd });
         }
       }
       units[i] = unit;
-    }
+    });
     const current = new Set(units);
     const removed = this.units.filter((u) => !current.has(u));
 
@@ -415,12 +471,12 @@ class IndexState {
     for (const id of this.assets.keys()) if (!assets.has(id)) changedIds.add(id);
     this.assets = assets;
 
-    // References. Old ones go before units take their new table.
+    // Entries. Old ones go before units take their new table.
     for (const unit of removed) {
-      unit.forEach((ref) => this.remove(ref));
+      unit.forEachEntry((entry) => this.remove(entry));
       if (unit instanceof TableUnit && this.tables.get(unit.table.id) === unit) this.tables.delete(unit.table.id);
     }
-    for (const unit of rebuilt) unit.forEach((ref) => this.remove(ref));
+    for (const unit of rebuilt) unit.forEachEntry((entry) => this.remove(entry));
     for (const c of changes) if (!rebuilt.has(c.unit)) this.updateRows(c);
     project.assets.forEach((asset, i) => {
       const unit = units[i];
@@ -431,71 +487,83 @@ class IndexState {
     });
     for (const unit of [...rebuilt, ...added]) {
       if (unit instanceof TableUnit) unit.build();
-      unit.forEach((ref) => this.add(ref));
+      unit.forEachEntry((entry) => this.add(entry));
     }
 
-    // References whose target appeared or disappeared.
-    for (const id of changedIds) this.forTarget(id, (ref) => this.setBroken(ref));
+    // Entries whose target appeared or disappeared.
+    for (const id of changedIds) this.forTarget(id, (entry) => this.setBroken(entry));
 
     this.units = units;
     return this.snapshot(project, units);
   }
 
-  /** Re-collects the changed rows of one table. Shifted rows have new paths, so a length
-   *  change re-collects everything after the change. */
+  /** Re-collects the changed rows of one table and renumbers the rows after them. */
   private updateRows(c: RowChange): void {
     const unit = c.unit;
-    const shifted = c.afterEnd - c.beforeEnd !== 0;
-    const beforeEnd = shifted ? unit.table.rows.length : c.beforeEnd;
-    const afterEnd = shifted ? c.table.rows.length : c.afterEnd;
-    unit.table = c.table;
-    for (const column of unit.columns) {
-      for (let r = c.start; r < beforeEnd; r++) forEachRef(column.cells[r]!, (ref) => this.remove(ref));
-      const cells = unit.collect(column, c.start, afterEnd);
-      for (const cell of cells) forEachRef(cell, (ref) => this.add(ref));
-      column.cells = replaceRange(column.cells, c.start, beforeEnd, cells);
+    for (let r = c.start; r < c.beforeEnd; r++) forEachSlotRef(unit.slots[r]!, (ref) => this.remove(ref));
+    const fresh: (RowSlot | null)[] = new Array(c.afterEnd - c.start);
+    for (let r = c.start; r < c.afterEnd; r++) {
+      const slot = unit.slot(c.table.rows[r]!, r);
+      forEachSlotRef(slot, (ref) => this.add(ref));
+      fresh[r - c.start] = slot;
+    }
+    unit.slots = replaceRange(unit.slots, c.start, c.beforeEnd, fresh);
+    if (c.afterEnd !== c.beforeEnd) {
+      for (let r = c.afterEnd; r < unit.slots.length; r++) {
+        const slot = unit.slots[r];
+        if (slot) slot.index = r;
+      }
     }
   }
 
-  private add(ref: Reference): void {
-    const entry = this.targets.get(ref.target);
-    if (entry === undefined) this.targets.set(ref.target, ref);
-    else if (entry instanceof Set) entry.add(ref);
-    else this.targets.set(ref.target, new Set([entry, ref]));
-    if (isBroken(ref, this.assets, this.owners)) this.broken.add(ref);
+  private isBroken(entry: Entry): boolean {
+    if (entry instanceof CellRef) return this.owners.get(entry.target) !== entry.column.targetTable;
+    if (entry instanceof ColumnRef) return this.assets.get(entry.target)?.kind !== "table";
+    return isBroken(entry, this.assets, this.owners);
   }
 
-  private remove(ref: Reference): void {
-    const entry = this.targets.get(ref.target);
-    if (entry === ref) this.targets.delete(ref.target);
-    else if (entry instanceof Set) {
-      entry.delete(ref);
-      if (entry.size === 1) this.targets.set(ref.target, entry.values().next().value!);
+  private add(entry: Entry): void {
+    const set = this.targets.get(entry.target);
+    if (set === undefined) this.targets.set(entry.target, entry);
+    else if (set instanceof Set) set.add(entry);
+    else this.targets.set(entry.target, new Set([set, entry]));
+    if (this.isBroken(entry)) this.broken.add(entry);
+  }
+
+  private remove(entry: Entry): void {
+    const set = this.targets.get(entry.target);
+    if (set === entry) this.targets.delete(entry.target);
+    else if (set instanceof Set) {
+      set.delete(entry);
+      if (set.size === 1) this.targets.set(entry.target, set.values().next().value!);
     }
-    this.broken.delete(ref);
+    this.broken.delete(entry);
   }
 
-  private setBroken(ref: Reference): void {
-    if (isBroken(ref, this.assets, this.owners)) this.broken.add(ref);
-    else this.broken.delete(ref);
+  private setBroken(entry: Entry): void {
+    if (this.isBroken(entry)) this.broken.add(entry);
+    else this.broken.delete(entry);
   }
 
-  private forTarget(target: Id, fn: (ref: Reference) => void): void {
-    const entry = this.targets.get(target);
-    if (entry === undefined) return;
-    if (entry instanceof Set) entry.forEach(fn);
-    else fn(entry);
+  private forTarget(target: Id, fn: (entry: Entry) => void): void {
+    const set = this.targets.get(target);
+    if (set === undefined) return;
+    if (set instanceof Set) set.forEach(fn);
+    else fn(set);
   }
 
   private snapshot(project: Project, units: readonly Unit[]): ReferenceIndex {
     const version = ++this.version;
     const self = this;
-    const compare = (a: Reference, b: Reference): number => {
-      const ai = a.path[1] as number;
-      const bi = b.path[1] as number;
-      return ai !== bi ? ai - bi : units[ai]!.compare(a, b);
+    const compare = (a: Entry, b: Entry): number => {
+      const ai = assetIndexOf(a);
+      const bi = assetIndexOf(b);
+      if (ai !== bi) return ai - bi;
+      const unit = units[ai]!;
+      return unit instanceof StaticUnit ? unit.compare(a as Reference, b as Reference) : compareInTable(a as ColumnRef | CellRef, b as ColumnRef | CellRef);
     };
-    const broken = [...this.broken].sort(compare);
+    // Paths are taken now, so this list stays correct after later edits.
+    const broken = [...this.broken].sort(compare).map(materialize);
     let full: ReferenceIndex | undefined;
     const fallback = (): ReferenceIndex => (full ??= buildFull(project));
     const sorted = new Map<Id, readonly Reference[]>();
@@ -506,7 +574,7 @@ class IndexState {
         if (self.version !== version) return fallback().references;
         if (references === undefined) {
           references = [];
-          for (const unit of units) unit.forEach((ref) => references!.push(ref));
+          for (const unit of units) unit.forEach((entry) => references!.push(materialize(entry)));
         }
         return references;
       },
@@ -516,9 +584,9 @@ class IndexState {
         if (!self.targets.has(target)) return EMPTY;
         let list = sorted.get(target);
         if (list === undefined) {
-          const out: Reference[] = [];
-          self.forTarget(target, (ref) => out.push(ref));
-          list = out.sort(compare);
+          const entries: Entry[] = [];
+          self.forTarget(target, (entry) => entries.push(entry));
+          list = entries.sort(compare).map(materialize);
           sorted.set(target, list);
         }
         return list;
