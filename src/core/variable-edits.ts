@@ -1,8 +1,8 @@
 /**
  * Edits on project variables (flags, counters, quest states). Renaming a variable also
- * rewrites every expression that uses it (gate nodes, recipe unlock cells), so a rename
- * never breaks a condition. Deleting a variable or changing its type drops saved scenario
- * values that no longer fit it.
+ * rewrites every expression that uses it (gate nodes, recipe unlock cells, column
+ * formulas), so a rename never breaks a condition. Deleting a variable or changing its
+ * type drops saved scenario values that no longer fit it.
  */
 import type { Change, Patch } from "./history.ts";
 import type { IdGenerator } from "./ids.ts";
@@ -97,6 +97,9 @@ export function renameInExpression(source: string, from: string, to: string): st
     if (t.kind !== "name" || t.text.toLowerCase() !== key) continue;
     const next = tokens[i + 1];
     if (next !== undefined && next.kind === "op" && next.text === "(") continue;
+    // After a dot the name is a column of a referenced table (Weapon.Level), not a variable.
+    const before = tokens[i - 1];
+    if (before !== undefined && before.kind === "op" && before.text === ".") continue;
     out += source.slice(last, t.start) + to;
     last = t.end;
   }
@@ -121,7 +124,7 @@ function dropScenarioValues(project: Project, id: Id, next: Variable | undefined
   return patches;
 }
 
-/** Patches that rename a variable in gate nodes and recipe unlock cells. */
+/** Patches that rename a variable in gate nodes, recipe unlock cells and column formulas. */
 function renameInExpressions(project: Project, from: string, to: string): Patch[] {
   const patches: Patch[] = [];
   const key = from.toLowerCase();
@@ -134,13 +137,22 @@ function renameInExpressions(project: Project, from: string, to: string): Patch[
         const next = renameInExpression(node.condition, from, to);
         if (next !== node.condition) patches.push({ op: "set", path: ["assets", a, "nodes", n, "condition"], value: next });
       });
-    } else if (asset.kind === "table" && asset.role?.kind === "recipes" && asset.role.gate !== undefined) {
-      const column = asset.role.gate;
-      asset.rows.forEach((row, r) => {
-        const cell = row.cells[column];
-        if (typeof cell !== "string" || !mentions(cell)) return;
-        const next = renameInExpression(cell, from, to);
-        if (next !== cell) patches.push({ op: "set", path: ["assets", a, "rows", r, "cells", column], value: next });
+    } else if (asset.kind === "table") {
+      if (asset.role?.kind === "recipes" && asset.role.gate !== undefined) {
+        const column = asset.role.gate;
+        asset.rows.forEach((row, r) => {
+          const cell = row.cells[column];
+          if (typeof cell !== "string" || !mentions(cell)) return;
+          const next = renameInExpression(cell, from, to);
+          if (next !== cell) patches.push({ op: "set", path: ["assets", a, "rows", r, "cells", column], value: next });
+        });
+      }
+      // Column formulas, unless a column of the same name shadows the variable there.
+      if (asset.columns.some((c) => c.name.toLowerCase() === key)) return;
+      asset.columns.forEach((column, c) => {
+        if (column.formula === undefined || !mentions(column.formula)) return;
+        const next = renameInExpression(column.formula, from, to);
+        if (next !== column.formula) patches.push({ op: "set", path: ["assets", a, "columns", c, "formula"], value: next });
       });
     }
   });

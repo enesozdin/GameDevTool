@@ -13,9 +13,11 @@
  * and a CsvFormat (csv-formats.ts) writes them as text: `generic` (JSON cells, default)
  * or `unreal` (DataTable text format). Import accepts the same values back, maps columns
  * by header name (case-insensitive), keeps the ids of rows whose name already exists
- * (stable ids → small diffs) and reports every cell it could not read.
+ * (stable ids → small diffs) and reports every cell it could not read. Formula columns
+ * export their computed values; import skips them (their values are computed).
  */
 import { parseCsv, writeCsv, type CsvError } from "../csv.ts";
+import { evaluateFormulas, hasFormula, type FormulaResults } from "../formulas.ts";
 import type { IdGenerator } from "../ids.ts";
 import type { Id } from "../model/primitives.ts";
 import { IdentifierSchema, LocKeySchema } from "../model/primitives.ts";
@@ -35,6 +37,11 @@ export interface TableCsvOptions {
   readonly spreadsheetSafe?: boolean;
   /** "," for CSV, "\t" for TSV (spreadsheet copy/paste). */
   readonly delimiter?: string;
+  /**
+   * Computed formula columns (export). Formula columns are written with their computed
+   * values; without this they are evaluated for the export.
+   */
+  readonly formulas?: FormulaResults;
 }
 
 /**
@@ -90,11 +97,16 @@ export function exportTableCsv(project: Project, table: TableAsset, options: Tab
   const format = options.format ?? GENERIC_CSV;
   const names = rowNames(project);
   const rows: string[][] = [[format.rowNameHeader, ...table.columns.map((c) => c.name)]];
-  for (const row of table.rows) {
+  // Formula columns export their computed values (cells with errors stay empty).
+  const anyFormula = table.columns.some(hasFormula);
+  const formulas = anyFormula ? (options.formulas ?? evaluateFormulas(project)) : undefined;
+  const computed = table.columns.map((c) => (hasFormula(c) ? formulas?.get(table.id, c.id) : undefined));
+  for (const [r, row] of table.rows.entries()) {
     rows.push([
       row.name,
-      ...table.columns.map((c) => {
-        const text = formatCell(c.type, row.cells[c.id], names, table.name, format);
+      ...table.columns.map((c, k) => {
+        const value = hasFormula(c) ? computed[k]?.value(r) : row.cells[c.id];
+        const text = formatCell(c.type, value, names, table.name, format);
         return options.spreadsheetSafe === true && (c.type.kind === "string" || c.type.kind === "text") ? guardFormula(text) : text;
       }),
     ]);
@@ -161,7 +173,9 @@ export type CsvImportIssue =
   | { readonly code: "invalid-row-name"; readonly line: number; readonly value: string }
   | { readonly code: "duplicate-row-name"; readonly line: number; readonly value: string }
   | { readonly code: "invalid-value"; readonly line: number; readonly column: string; readonly value: string }
-  | { readonly code: "unknown-header"; readonly column: string };
+  | { readonly code: "unknown-header"; readonly column: string }
+  /** A formula column in the file: its values are computed, so the file's values are not imported. */
+  | { readonly code: "formula-column"; readonly column: string };
 
 export type CsvImportError = CsvError | { readonly code: "empty" } | { readonly code: "too-many-rows"; readonly limit: number };
 
@@ -192,6 +206,10 @@ export function importTableCsv(project: Project, table: TableAsset, text: string
     if (i === 0) return undefined;
     const column = byName.get(h.trim().toLowerCase());
     if (column === undefined && h.trim() !== "") issues.push({ code: "unknown-header", column: h });
+    if (column !== undefined && hasFormula(column)) {
+      issues.push({ code: "formula-column", column: column.name });
+      return undefined;
+    }
     return column;
   });
 
@@ -216,10 +234,10 @@ export function importTableCsv(project: Project, table: TableAsset, text: string
     seen.add(name.toLowerCase());
     const previous = existing.get(name.toLowerCase());
     const cells: Record<Id, CellValue> = {};
-    // Columns missing from the CSV keep their values.
+    // Columns missing from the CSV keep their values. Formula columns store none.
     if (previous !== undefined) {
       for (const c of table.columns) {
-        if (!mapping.includes(c) && previous.cells[c.id] !== undefined) cells[c.id] = previous.cells[c.id]!;
+        if (!mapping.includes(c) && !hasFormula(c) && previous.cells[c.id] !== undefined) cells[c.id] = previous.cells[c.id]!;
       }
     }
     mapping.forEach((column, i) => {

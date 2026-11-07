@@ -7,6 +7,7 @@ import {
   LocalizableTextSchema,
   NameSchema,
 } from "./primitives.ts";
+import { EXPR_LIMITS } from "../expr/syntax.ts";
 
 export const TABLE_LIMITS = {
   columnsPerTable: 512,
@@ -102,6 +103,11 @@ export const ColumnSchema = z.object({
   description: z.optional(DescriptionSchema),
   required: z.optional(z.boolean()),
   type: ColumnTypeSchema,
+  /**
+   * Column formula (expression language, src/core/formulas.ts). Cells of a formula column
+   * are computed from it and not stored. Only int, float, string and bool columns.
+   */
+  formula: z.optional(z.string().check(z.maxLength(EXPR_LIMITS.length))),
 });
 export type Column = z.infer<typeof ColumnSchema>;
 
@@ -218,3 +224,10 @@ export const TableAssetSchema = z.object({
   rows: z.array(RowSchema).check(z.maxLength(TABLE_LIMITS.rowsPerTable)),
 });
 export type TableAsset = z.infer<typeof TableAssetSchema>;
+
+/** Whether the table's role (items, recipes, machines) uses this column. */
+export function isRoleColumn(table: TableAsset, columnId: string): boolean {
+  if (table.role === undefined) return false;
+  for (const [key, value] of Object.entries(table.role)) if (key !== "kind" && value === columnId) return true;
+  return false;
+}

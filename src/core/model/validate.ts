@@ -2,7 +2,9 @@ import type { Issue, IssuePath } from "../result.ts";
 import type { EnumOption, Id } from "./primitives.ts";
 import type { Project } from "./project.ts";
 import { buildReferenceIndex, type ReferenceIndex } from "./references.ts";
-import { isTagStack, TAG_PATTERN, type CellValue, type Column, type ColumnType, type ScalarType, type TableAsset } from "./table.ts";
+import { isRoleColumn, isTagStack, TAG_PATTERN, type CellValue, type Column, type ColumnType, type ScalarType, type TableAsset } from "./table.ts";
+import { evaluateFormulas, hasFormula, type FormulaColumnResult, type FormulaResults } from "../formulas.ts";
+import type { Value } from "../expr/compile.ts";
 import { ULID_PATTERN } from "../ids.ts";
 import type { Asset } from "./project.ts";
 import { validateProductionGraph } from "../production/validate-graph.ts";
@@ -15,7 +17,7 @@ import { KEYWORDS } from "../expr/syntax.ts";
  * Runs after the zod parse, so the project is structurally valid here.
  * Paths are allocated only when an issue is reported, so clean projects stay cheap.
  */
-export function validateProject(project: Project, index: ReferenceIndex = buildReferenceIndex(project), cache?: ValidationCache): Issue[] {
+export function validateProject(project: Project, index: ReferenceIndex = buildReferenceIndex(project), cache?: ValidationCache, formulas?: FormulaResults): Issue[] {
   const issues: Issue[] = [];
   const ids = new Set<Id>();
   const claimId = (id: Id, path: () => IssuePath): void => {
@@ -81,6 +83,7 @@ export function validateProject(project: Project, index: ReferenceIndex = buildR
     replayClaims(check.locKeys, locKeys, (k) => issues.push({ severity: "error", code: "duplicate-loc-key", path: claimPath(run, "loc", k), params: { key: check.locKeys[k]! } }));
   });
 
+  checkFormulaResults(project, formulas ?? evaluateFormulas(project), cache, issues);
   checkDocumentCycles(project, issues);
 
   for (const ref of index.broken) {
@@ -112,10 +115,18 @@ type AssetRun = (claim: ClaimId, claimLocKey: ClaimId, out: Issue[]) => void;
  */
 export interface ValidationCache {
   readonly assets: WeakMap<object, AssetCheck>;
+  /** Findings per formula column result (the formula engine keeps unchanged results). */
+  readonly formulas: WeakMap<object, FormulaCheck>;
+}
+
+export interface FormulaCheck {
+  readonly assetIndex: number;
+  readonly columnIndex: number;
+  readonly issues: readonly Issue[];
 }
 
 export function createValidationCache(): ValidationCache {
-  return { assets: new WeakMap() };
+  return { assets: new WeakMap(), formulas: new WeakMap() };
 }
 
 function checkAsset(cache: ValidationCache | undefined, asset: Asset, assetIndex: number, deps: readonly unknown[], run: AssetRun): AssetCheck {
@@ -194,6 +205,8 @@ function validateTable(table: TableAsset, assetIndex: number, claimId: ClaimId, 
   const columnIds = new Set<Id>();
   const columnNames = new NameSet();
 
+  // Formula columns: their cells are computed (checked in checkFormulaResults), stored ones are leftovers.
+  const formulaColumns = new Set<Id>();
   table.columns.forEach((column, c) => {
     claimId(column.id, () => [...base, "columns", c, "id"]);
     columnIds.add(column.id);
@@ -201,13 +214,23 @@ function validateTable(table: TableAsset, assetIndex: number, claimId: ClaimId, 
       issues.push({ severity: "error", code: "duplicate-name", path: [...base, "columns", c, "name"], params: { name: column.name } });
     }
     checkColumnType(column.type, [...base, "columns", c, "type"], claimId, issues);
+    if (column.formula === undefined) return;
+    const path: IssuePath = [...base, "columns", c, "formula"];
+    if (!hasFormula(column)) issues.push({ severity: "error", code: "formula-column-type", path, params: { kind: column.type.kind } });
+    else {
+      formulaColumns.add(column.id);
+      if (isRoleColumn(table, column.id)) issues.push({ severity: "error", code: "formula-role-column", path });
+      let stored = 0;
+      for (const row of table.rows) if (row.cells[column.id] !== undefined && row.cells[column.id] !== null) stored++;
+      if (stored > 0) issues.push({ severity: "warning", code: "formula-stored-values", path, params: { count: stored } });
+    }
   });
 
   // One map per unique column: value -> first row index.
   const uniqueSeen = new Map<Id, Map<string | number, number>>();
   for (const column of table.columns) {
     const t = column.type;
-    if ((t.kind === "int" || t.kind === "string") && t.unique === true) uniqueSeen.set(column.id, new Map());
+    if ((t.kind === "int" || t.kind === "string") && t.unique === true && !formulaColumns.has(column.id)) uniqueSeen.set(column.id, new Map());
   }
 
   const rowNames = new NameSet();
@@ -223,6 +246,7 @@ function validateTable(table: TableAsset, assetIndex: number, claimId: ClaimId, 
     }
 
     for (const column of table.columns) {
+      if (formulaColumns.size > 0 && formulaColumns.has(column.id)) continue;
       const value = row.cells[column.id];
       at.column = column.id;
       at.tagsAllowed = column.id === tagColumn;
@@ -487,6 +511,80 @@ function scalarPath(at: CellLocation, listIndex: number | undefined): IssuePath 
 
 function mismatch(path: IssuePath, expected: string): Issue {
   return { severity: "error", code: "type-mismatch", path, params: { expected } };
+}
+
+// ---------------------------------------------------------------------------------------
+// Formula columns: errors and column constraints on the computed values. One issue per
+// column and kind of problem (pointing at the first cell), since one bad input can fail
+// every row. Findings are cached per result object, which the engine keeps while the
+// column's inputs do not change.
+// ---------------------------------------------------------------------------------------
+
+function checkFormulaResults(project: Project, formulas: FormulaResults, cache: ValidationCache | undefined, issues: Issue[]): void {
+  if (formulas.columns.length === 0) return;
+  project.assets.forEach((asset, a) => {
+    if (asset.kind !== "table") return;
+    asset.columns.forEach((column, c) => {
+      if (!hasFormula(column)) return;
+      const result = formulas.get(asset.id, column.id);
+      if (result === undefined) return;
+      let check = cache?.formulas.get(result);
+      if (check === undefined || check.assetIndex !== a || check.columnIndex !== c) {
+        check = { assetIndex: a, columnIndex: c, issues: formulaResultIssues(column, a, c, result) };
+        cache?.formulas.set(result, check);
+      }
+      for (const issue of check.issues) issues.push(issue);
+    });
+  });
+}
+
+function formulaResultIssues(column: Column, a: number, c: number, result: FormulaColumnResult): Issue[] {
+  if (result.error !== undefined) return [exprIssue(["assets", a, "columns", c, "formula"], result.error)];
+  const out: Issue[] = [];
+  const cell = (r: number): IssuePath => ["assets", a, "rows", r, "cells", column.id];
+  if (result.cellErrors.size > 0) {
+    let first = Number.POSITIVE_INFINITY;
+    for (const r of result.cellErrors.keys()) if (r < first) first = r;
+    const error = result.cellErrors.get(first)!;
+    out.push({ severity: "error", code: "formula-cell-errors", path: cell(first), params: { count: result.cellErrors.size, error: error.code } });
+  }
+  const t = column.type;
+  const count = (code: string, bad: (v: Value) => boolean, params: Record<string, string | number> = {}) => {
+    let n = 0;
+    let first = -1;
+    for (let r = 0; r < result.length; r++) {
+      const v = result.value(r);
+      if (v !== undefined && bad(v)) {
+        if (n++ === 0) first = r;
+      }
+    }
+    if (n > 0) out.push({ severity: "error", code, path: cell(first), params: { ...params, count: n } });
+  };
+  if ((t.kind === "int" || t.kind === "float") && (t.min !== undefined || t.max !== undefined)) {
+    count("out-of-range", (v) => (t.min !== undefined && (v as number) < t.min) || (t.max !== undefined && (v as number) > t.max));
+  }
+  if (t.kind === "string" && t.maxLength !== undefined) {
+    const max = t.maxLength;
+    count("too-long", (v) => (v as string).length > max, { limit: max });
+  }
+  if ((t.kind === "int" || t.kind === "string") && t.unique === true) {
+    const seen = new Map<Value, number>();
+    let n = 0;
+    let at = -1;
+    let firstRow = -1;
+    for (let r = 0; r < result.length; r++) {
+      const v = result.value(r);
+      if (v === undefined) continue;
+      const prev = seen.get(v);
+      if (prev === undefined) seen.set(v, r);
+      else if (n++ === 0) {
+        at = r;
+        firstRow = prev;
+      }
+    }
+    if (n > 0) out.push({ severity: "error", code: "duplicate-value", path: cell(at), params: { firstRow, count: n } });
+  }
+  return out;
 }
 
 function checkDocumentCycles(project: Project, issues: Issue[]): void {

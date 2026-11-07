@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   addColumn,
   addRow,
@@ -13,12 +13,14 @@ import {
   uniqueRowName,
   type Change,
   type CsvFormatId,
+  type FormulaResults,
   type IdGenerator,
   type Project,
   type Row,
   type TableAsset,
 } from "../../core/index.ts";
 import type { UiStrings } from "../strings.ts";
+import { FormulaBar } from "./FormulaBar.tsx";
 import { NewColumnForm } from "./NewColumnForm.tsx";
 import { initialSelection, resolveSelection, TableGrid, type GridSelection } from "./TableGrid.tsx";
 
@@ -29,6 +31,8 @@ export interface TableEditorProps {
   readonly strings: UiStrings;
   readonly project: Project;
   readonly table: TableAsset;
+  /** Computed formula columns of the project. */
+  readonly formulas: FormulaResults;
   readonly newId: IdGenerator;
   readonly commit: (change: Change | null) => void;
   /** Saves a file (download); provided by the app. */
@@ -39,11 +43,11 @@ export interface TableEditorProps {
 }
 
 /**
- * Table asset editor: a toolbar (rows, columns, CSV) above the spreadsheet grid
- * (TableGrid.tsx). The toolbar works on the grid's selection, so touch users, who have no
- * keyboard shortcuts, can still delete rows and fill down.
+ * Table asset editor: a toolbar (rows, columns, CSV) and the formula bar above the
+ * spreadsheet grid (TableGrid.tsx). The toolbar works on the grid's selection, so touch
+ * users, who have no keyboard shortcuts, can still delete rows and fill down.
  */
-export function TableEditor({ strings, project, table, newId, commit, saveFile, pickTextFile, notify }: TableEditorProps) {
+export function TableEditor({ strings, project, table, formulas, newId, commit, saveFile, pickTextFile, notify }: TableEditorProps) {
   const s = strings.tables;
   const [format, setFormat] = useState<CsvFormatId>("generic");
   const [spreadsheetSafe, setSpreadsheetSafe] = useState(false);
@@ -52,6 +56,9 @@ export function TableEditor({ strings, project, table, newId, commit, saveFile, 
   const { focus, range } = resolveSelection(table, selection);
   const hasCells = table.rows.length > 0;
   const selectedRows = range.bottom - range.top + 1;
+  const gridRef = useRef<HTMLDivElement>(null);
+  const formulaRef = useRef<HTMLInputElement>(null);
+  const activeColumn = focus.col > 0 ? (table.columns[focus.col - 1] ?? null) : null;
 
   /**
    * Deletes rows, asking first when other assets (recipes, graphs, references) use them or
@@ -88,7 +95,7 @@ export function TableEditor({ strings, project, table, newId, commit, saveFile, 
   };
 
   const onExport = () => {
-    const csv = exportTableCsv(project, table, { format: CSV_FORMATS[format], spreadsheetSafe });
+    const csv = exportTableCsv(project, table, { format: CSV_FORMATS[format], spreadsheetSafe, formulas });
     saveFile(`${table.name.replace(/[^A-Za-z0-9_-]+/g, "_") || "table"}.csv`, csv, "text/csv");
   };
 
@@ -108,7 +115,9 @@ export function TableEditor({ strings, project, table, newId, commit, saveFile, 
     const { rows, issues, removed } = result.value;
     if (removed > 0 && !window.confirm(s.confirmImport(removed))) return;
     commit(replaceRows(project, table.id, rows));
-    notify(s.imported(rows.length, removed, issues.filter((i) => i.code === "invalid-value").length), issues.length > 0 ? "error" : "info");
+    const skipped = issues.flatMap((i) => (i.code === "formula-column" ? [i.column] : []));
+    const text = s.imported(rows.length, removed, issues.filter((i) => i.code === "invalid-value").length);
+    notify(skipped.length > 0 ? `${text} ${s.importedFormulas(skipped.join(", "))}` : text, issues.length > skipped.length ? "error" : "info");
   };
 
   return (
@@ -146,6 +155,19 @@ export function TableEditor({ strings, project, table, newId, commit, saveFile, 
         <span className="muted small">{s.rowsCount(table.rows.length)}</span>
       </div>
 
+      <FormulaBar
+        strings={strings}
+        project={project}
+        table={table}
+        column={activeColumn}
+        rowIndex={hasCells ? focus.row : -1}
+        formulas={formulas}
+        commit={commit}
+        notify={notify}
+        inputRef={formulaRef}
+        onDone={() => gridRef.current?.focus({ preventScroll: true })}
+      />
+
       <TableGrid
         strings={strings}
         project={project}
@@ -157,6 +179,9 @@ export function TableEditor({ strings, project, table, newId, commit, saveFile, 
         selection={selection}
         setSelection={setSelection}
         deleteRows={deleteRows}
+        formulas={formulas}
+        gridRef={gridRef}
+        onEditFormula={() => formulaRef.current?.focus()}
       />
     </div>
   );

@@ -23,6 +23,7 @@ import {
   undoLabel,
   validateProject,
   createValidationCache,
+  FormulaEngine,
   type Asset,
   type Change,
   type FolderIo,
@@ -89,7 +90,10 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
   const index = useMemo(() => buildReferenceIndex(project), [project]);
   // Unchanged assets keep their findings, so an edit re-checks only what it touched.
   const validationCache = useMemo(createValidationCache, []);
-  const issues = useMemo(() => validateProject(project, index, validationCache), [project, index, validationCache]);
+  // Formula columns; recalculates only what an edit touched (see core/formulas.ts).
+  const formulaEngine = useMemo(() => new FormulaEngine(), []);
+  const formulas = useMemo(() => formulaEngine.evaluate(project), [formulaEngine, project]);
+  const issues = useMemo(() => validateProject(project, index, validationCache, formulas), [project, index, validationCache, formulas]);
   const selected = selectedId === null ? undefined : project.assets.find((a) => a.id === selectedId);
   const referenceCount = useMemo(() => (selected ? incomingReferenceCount(index, selected) : 0), [index, selected]);
 
@@ -501,6 +505,7 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
                   strings={strings}
                   project={project}
                   table={selected}
+                  formulas={formulas}
                   newId={newId}
                   commit={commitChange}
                   saveFile={downloadText}

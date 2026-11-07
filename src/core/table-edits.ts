@@ -5,8 +5,9 @@
 import type { Change, Patch } from "./history.ts";
 import { IdentifierSchema, type Id } from "./model/primitives.ts";
 import type { Project } from "./model/project.ts";
-import { TABLE_LIMITS, type CellValue, type Column, type ColumnType, type Row, type ScalarType, type TableAsset } from "./model/table.ts";
+import { isRoleColumn, TABLE_LIMITS, type CellValue, type Column, type ColumnType, type Row, type ScalarType, type TableAsset } from "./model/table.ts";
 import type { IdGenerator } from "./ids.ts";
+import { renameColumnInFormulas } from "./formulas.ts";
 import { err, ok, type Result } from "./result.ts";
 
 export function isValidIdentifier(name: string): boolean {
@@ -97,7 +98,13 @@ export function renameColumn(project: Project, tableId: Id, columnId: Id, name: 
   if (at === null || !isValidIdentifier(name)) return null;
   const i = at.table.columns.findIndex((c) => c.id === columnId);
   if (i < 0 || at.table.columns[i]!.name === name) return null;
-  return { label: "rename-column", coalesceKey: `rename-column:${columnId}`, patches: [{ op: "set", path: ["assets", at.index, "columns", i, "name"], value: name }] };
+  // Formulas that name the column (here, or through references) follow the rename.
+  const formulas = at.table.columns[i]!.name.toLowerCase() === name.toLowerCase() ? [] : renameColumnInFormulas(project, tableId, columnId, name);
+  return {
+    label: "rename-column",
+    coalesceKey: `rename-column:${columnId}`,
+    patches: [{ op: "set", path: ["assets", at.index, "columns", i, "name"], value: name }, ...formulas],
+  };
 }
 
 /** Removes a column and its cells. Columns used by the table's role cannot be removed. */
@@ -111,12 +118,6 @@ export function removeColumn(project: Project, tableId: Id, columnId: Id): Chang
     if (Object.hasOwn(row.cells, columnId)) patches.push({ op: "set", path: ["assets", at.index, "rows", r, "cells", columnId], value: undefined });
   });
   return { label: "remove-column", patches };
-}
-
-export function isRoleColumn(table: TableAsset, columnId: Id): boolean {
-  if (table.role === undefined) return false;
-  for (const [key, value] of Object.entries(table.role)) if (key !== "kind" && value === columnId) return true;
-  return false;
 }
 
 /** Replaces all rows (CSV import). */

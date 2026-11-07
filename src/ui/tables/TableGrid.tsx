@@ -5,6 +5,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ClipboardEvent,
@@ -13,6 +14,7 @@ import {
   type MouseEvent,
   type PointerEvent,
   type ReactNode,
+  type RefObject,
   type SetStateAction,
 } from "react";
 import {
@@ -20,6 +22,7 @@ import {
   copyRange,
   fillDown,
   gridRange,
+  hasFormula,
   isRoleColumn,
   isTextEditable,
   isValidIdentifier,
@@ -33,6 +36,8 @@ import {
   cellToText,
   type CellValue,
   type Change,
+  type FormulaColumnResult,
+  type FormulaResults,
   type GridPoint,
   type GridRange,
   type GridWrite,
@@ -100,6 +105,12 @@ export interface TableGridProps {
   readonly setSelection: Dispatch<SetStateAction<GridSelection>>;
   /** Deletes rows after asking when needed (shared with the toolbar); false when cancelled. */
   readonly deleteRows: (rows: readonly Row[]) => boolean;
+  /** Computed formula columns. */
+  readonly formulas: FormulaResults;
+  /** The grid's scroll container (focusable); the editor gives focus back through it. */
+  readonly gridRef: RefObject<HTMLDivElement | null>;
+  /** Editing a formula cell edits the column formula instead (the formula bar). */
+  readonly onEditFormula: () => void;
 }
 
 /**
@@ -110,15 +121,27 @@ export interface TableGridProps {
  * selected cell, Delete clears, Ctrl+D fills down, Ctrl+A selects all, Ctrl+C/X/V use the
  * clipboard as TSV. Every paste, fill or clear is one undo step.
  */
-export function TableGrid({ strings, project, table, names, newId, commit, notify, selection, setSelection, deleteRows }: TableGridProps) {
+export function TableGrid({ strings, project, table, names, newId, commit, notify, selection, setSelection, deleteRows, formulas, gridRef, onEditFormula }: TableGridProps) {
   const s = strings.tables;
   const gridId = useId();
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollRef = gridRef;
   const clipRef = useRef<HTMLTextAreaElement>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
 
   const lastRow = table.rows.length - 1;
   const lastCol = table.columns.length;
+  // Results per column (undefined for stored columns), shared by every rendered row. The
+  // engine keeps unchanged results, so the array stays the same while they do: an edit
+  // elsewhere in the project does not re-render the visible rows.
+  const computedRef = useRef<readonly (FormulaColumnResult | undefined)[]>([]);
+  const computed = useMemo(() => {
+    const next = table.columns.map((c) => (hasFormula(c) ? formulas.get(table.id, c.id) : undefined));
+    const prev = computedRef.current;
+    return prev.length === next.length && prev.every((r, i) => r === next[i]) ? prev : next;
+  }, [table.columns, table.id, formulas]);
+  useLayoutEffect(() => {
+    computedRef.current = computed;
+  });
   const hasCells = table.rows.length > 0;
   const { anchor, focus, range } = resolveSelection(table, selection);
   const clamp = (p: GridPoint): GridPoint => resolveSelection(table, { anchor: p, focus: p }).focus;
@@ -207,6 +230,7 @@ export function TableGrid({ strings, project, table, names, newId, commit, notif
     const row = table.rows[focus.row];
     if (row === undefined) return;
     const column = focus.col === 0 ? null : table.columns[focus.col - 1]!;
+    if (column !== null && hasFormula(column)) return onEditFormula();
     if (column !== null && !isTextEditable(column)) return;
     if (column?.type.kind === "bool") {
       // Yes/No cells toggle (Enter, Space, double-click, tap) instead of opening an
@@ -240,7 +264,7 @@ export function TableGrid({ strings, project, table, names, newId, commit, notif
     e.preventDefault();
     focusGrid();
     if (!hasCells) return;
-    const text = copyRange(table, range, names);
+    const text = copyRange(table, range, names, formulas);
     if (!text.ok) return notify(s.tooManyCells(text.error.limit), "error");
     e.clipboardData.setData("text/plain", text.value);
     if (cut) report(clearRange(project, table.id, range));
@@ -456,6 +480,11 @@ export function TableGrid({ strings, project, table, names, newId, commit, notif
           {table.columns.slice(c0, c1 + 1).map((c, k) => (
             <div key={c.id} role="columnheader" aria-colindex={c0 + k + 2} className="tcell" title={c.description}>
               <span className="tcol-name">{c.name}</span>
+              {hasFormula(c) && (
+                <span className="tcol-type formula-badge" title={s.formulaBadgeTitle(c.formula!)}>
+                  {s.formulaBadge}
+                </span>
+              )}
               <span className="tcol-type">{s.kindLabel[c.type.kind]}</span>
               {isRoleColumn(table, c.id) ? (
                 <span className="tcol-type" title={s.builtIn}>
@@ -489,6 +518,7 @@ export function TableGrid({ strings, project, table, names, newId, commit, notif
                   c0={c0}
                   c1={c1}
                   names={names}
+                  computed={computed}
                   selLeft={inRange ? range.left : -1}
                   selRight={inRange ? range.right : -1}
                   activeCol={v.index === focus.row ? focus.col : -1}
@@ -519,6 +549,8 @@ interface GridRowProps {
   readonly c0: number;
   readonly c1: number;
   readonly names: RowNames;
+  /** Formula results per column index (undefined: stored column). */
+  readonly computed: readonly (FormulaColumnResult | undefined)[];
   /** Selected grid columns in this row, or -1 when the row is not selected. */
   readonly selLeft: number;
   readonly selRight: number;
@@ -532,14 +564,27 @@ interface GridRowProps {
   readonly onDelete: (row: Row) => void;
 }
 
-const GridRow = memo(function GridRow({ strings, table, row, index, top, c0, c1, names, selLeft, selRight, activeCol, activeId, editCol, editor, onDelete }: GridRowProps) {
+const GridRow = memo(function GridRow({ strings, table, row, index, top, c0, c1, names, computed, selLeft, selRight, activeCol, activeId, editCol, editor, onDelete }: GridRowProps) {
   const s = strings.tables;
   const cell = (col: number, className: string, style?: { left: number }) => {
     const selected = col >= selLeft && col <= selRight;
     const active = col === activeCol;
     const column = col === 0 ? undefined : table.columns[col - 1]!;
-    const content =
-      column === undefined ? <span className="tcell-text">{row.name}</span> : <CellView strings={strings} column={column} value={row.cells[column.id]} names={names} />;
+    const result = col === 0 ? undefined : computed[col - 1];
+    let content: ReactNode;
+    if (column === undefined) content = <span className="tcell-text">{row.name}</span>;
+    else if (result === undefined) content = <CellView strings={strings} column={column} value={row.cells[column.id]} names={names} />;
+    else {
+      const error = result.error ?? result.cellErrors.get(index);
+      content =
+        error !== undefined ? (
+          <span className="tcell-error" title={strings.expression.message(error.code, error.params ?? {})}>
+            {s.formulaErrorCell}
+          </span>
+        ) : (
+          <CellView strings={strings} column={column} value={result.value(index)} names={names} />
+        );
+    }
     return (
       <div
         key={col}
@@ -550,7 +595,7 @@ const GridRow = memo(function GridRow({ strings, table, row, index, top, c0, c1,
         data-row={index}
         data-col={col}
         style={style}
-        className={`tcell ${column !== undefined && isNumeric(column) ? "tcell-num " : ""}${className}${selected ? " is-sel" : ""}${active ? " is-active" : ""}`}
+        className={`tcell ${column !== undefined && isNumeric(column) ? "tcell-num " : ""}${result !== undefined ? "tcell-formula " : ""}${className}${selected ? " is-sel" : ""}${active ? " is-active" : ""}`}
       >
         {col === editCol ? editor : content}
       </div>

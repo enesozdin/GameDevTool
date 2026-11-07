@@ -8,6 +8,7 @@
 import { cellToText, textToCell } from "./cell-text.ts";
 import { parseCsv, writeCsv } from "./csv.ts";
 import type { RowNames } from "./export/table-csv.ts";
+import { hasFormula, type FormulaResults } from "./formulas.ts";
 import type { Change, Patch } from "./history.ts";
 import type { IdGenerator } from "./ids.ts";
 import type { Id } from "./model/primitives.ts";
@@ -54,9 +55,9 @@ export function rangeCellCount(range: GridRange): number {
   return (range.bottom - range.top + 1) * (range.right - range.left + 1);
 }
 
-/** Columns whose cells can be written as text (curves have their own editor). */
+/** Columns whose cells can be written as text (curves have their own editor; formula cells are computed). */
 export function isTextEditable(column: Column): boolean {
-  return column.type.kind !== "curve";
+  return column.type.kind !== "curve" && !hasFormula(column);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -65,9 +66,10 @@ export function isTextEditable(column: Column): boolean {
 
 /**
  * The range as tab-separated text, the format Excel, Google Sheets and Unreal paste.
+ * Formula columns copy their computed values (from `formulas`; empty without it).
  * Refused above MAX_GRID_WRITE_CELLS, which bounds the text built on the main thread.
  */
-export function copyRange(table: TableAsset, range: GridRange, names: RowNames): Result<string, GridWriteError> {
+export function copyRange(table: TableAsset, range: GridRange, names: RowNames, formulas?: FormulaResults): Result<string, GridWriteError> {
   const r = clampRange(table, range);
   if (r === null) return ok("");
   if (rangeCellCount(r) > MAX_GRID_WRITE_CELLS) return err({ code: "too-many-cells", limit: MAX_GRID_WRITE_CELLS });
@@ -79,7 +81,8 @@ export function copyRange(table: TableAsset, range: GridRange, names: RowNames):
       if (c === 0) fields.push(row.name);
       else {
         const column = table.columns[c - 1]!;
-        fields.push(cellToText(column.type, row.cells[column.id], names));
+        const value = hasFormula(column) ? formulas?.get(table.id, column.id)?.value(i) : row.cells[column.id];
+        fields.push(cellToText(column.type, value, names));
       }
     }
     out.push(fields);
@@ -276,7 +279,7 @@ function writeRange(
   return ok(patches.length === 0 ? null : { label, patches });
 }
 
-/** Empties the data cells of the range. Row names stay, and so do curves (copy and paste skip them too). */
+/** Empties the data cells of the range. Row names stay, and so do curves and formula cells (paste skips them too). */
 export function clearRange(project: Project, tableId: Id, range: GridRange): Result<Change | null, GridWriteError> {
   return writeRange(project, tableId, range, "clear-cells", isTextEditable, () => undefined);
 }

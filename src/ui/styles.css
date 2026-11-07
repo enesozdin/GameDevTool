@@ -1093,3 +1093,55 @@ label.check {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ---- Formula bar and formula cells -------------------------------------------------- */
+
+.formula-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.formula-label {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 200px;
+}
+
+.formula-badge {
+  color: var(--muted);
+  font-style: italic;
+  font-weight: 600;
+}
+
+.formula-column {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.formula-input {
+  flex: 1 1 240px;
+  min-width: 0;
+  font-family: ui-monospace, monospace;
+}
+
+.formula-status {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+/* Computed cells: read-only look. */
+.tcell-formula {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.tcell-error {
+  color: var(--danger);
+  font-weight: 600;
+}

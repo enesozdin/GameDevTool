@@ -63,6 +63,17 @@ Adding these kinds was backward compatible: schema version 1 files stay valid.
 
 Tables export to engine-neutral CSV; see [CSV.md](CSV.md).
 
+## Column formulas
+
+A column can carry a `formula` (expression source text, at most 10 000 characters):
+`{ "id": "<ULID>", "name": "Damage", "type": { "kind": "float" }, "formula": "Base * (1 + Level * 0.1)" }`.
+Only `int`, `float`, `string` and `bool` columns use it, and not columns a table role uses.
+The cells of a formula column are computed and **not stored**: rows hold no key for it.
+Stored values left in a formula column (for example after a hand edit) are ignored and
+reported as a warning. Formulas name columns and variables by name; renames in the app
+rewrite them. See [EXPRESSIONS.md](EXPRESSIONS.md#table-formulas). Adding the field was
+backward compatible (schema version 1).
+
 ## Project folder
 
     MyGame/

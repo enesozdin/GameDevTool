@@ -49,7 +49,15 @@ export type ExprErrorCode =
   | "expr-type"
   | "expr-unknown-option"
   | "expr-division-by-zero"
-  | "expr-not-finite";
+  | "expr-not-finite"
+  // Table formulas (src/core/formulas.ts)
+  | "expr-unknown-column"
+  | "expr-not-reference"
+  | "expr-needs-column"
+  | "expr-unsupported-column"
+  | "expr-cycle"
+  | "expr-input-error"
+  | "expr-not-integer";
 
 export class ExprException extends Error {
   readonly error: ExprError;
@@ -93,6 +101,11 @@ export type Expr =
   | { readonly kind: "bool"; readonly value: boolean; readonly span: Span }
   /** `name` as written; resolved case-insensitively. */
   | { readonly kind: "name"; readonly name: string; readonly span: Span }
+  /**
+   * `object.name`: a column of the row a reference column points to (table formulas), e.g.
+   * `Weapon.Damage`. `object` is a name or another member, never a call or a literal.
+   */
+  | { readonly kind: "member"; readonly object: Expr; readonly name: string; readonly nameSpan: Span; readonly span: Span }
   | { readonly kind: "unary"; readonly op: UnaryOp; readonly operand: Expr; readonly span: Span }
   | { readonly kind: "binary"; readonly op: BinaryOp; readonly left: Expr; readonly right: Expr; readonly span: Span }
   | { readonly kind: "call"; readonly name: string; readonly nameSpan: Span; readonly args: readonly Expr[]; readonly span: Span };

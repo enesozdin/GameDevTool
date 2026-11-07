@@ -46,6 +46,9 @@ converter.
   Existing rows that are not in the file are removed (the app asks first; undo works).
 - Cells that cannot be read are reported with their line and column and left empty.
 - Imports are one undo step.
+- Formula columns are exported with their **computed values** (a cell whose formula fails
+  is empty), so engines get plain data. On import, formula columns in the file are
+  reported and skipped: their values are computed, not stored.
 
 ## Spreadsheet-safe text (optional)
 
