@@ -7,6 +7,7 @@ import {
   createProductionTables,
   findProductionTables,
   buildReferenceIndex,
+  createReferenceIndexCache,
   createDocument,
   createEmptyProject,
   createTable,
@@ -86,8 +87,10 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
 
   const project = state.history.present;
   const dirty = isDirty(state);
-  const index = useMemo(() => buildReferenceIndex(project), [project]);
-  // Unchanged assets keep their findings, so an edit re-checks only what it touched.
+  // Both caches follow the history: an edit re-collects and re-checks only the changed
+  // assets and rows, so a cell edit in a large table stays cheap.
+  const indexCache = useMemo(createReferenceIndexCache, []);
+  const index = useMemo(() => buildReferenceIndex(project, indexCache), [project, indexCache]);
   const validationCache = useMemo(createValidationCache, []);
   const issues = useMemo(() => validateProject(project, index, validationCache), [project, index, validationCache]);
   const selected = selectedId === null ? undefined : project.assets.find((a) => a.id === selectedId);

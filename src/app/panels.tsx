@@ -9,10 +9,14 @@ const MAX_LISTED_ISSUES = 100;
 
 /** References that would break if `asset` were deleted (its own internal ones excluded). */
 export function incomingReferenceCount(index: ReferenceIndex, asset: Asset): number {
-  let count = index.usedBy(asset.id).filter((r) => r.source !== asset.id).length;
-  if (asset.kind === "table") {
-    for (const row of asset.rows) count += index.usedBy(row.id).filter((r) => r.source !== asset.id).length;
-  }
+  // Runs after every edit while the asset is selected: count without allocating.
+  const incoming = (target: Id): number => {
+    let n = 0;
+    for (const ref of index.usedBy(target)) if (ref.source !== asset.id) n++;
+    return n;
+  };
+  let count = incoming(asset.id);
+  if (asset.kind === "table") for (const row of asset.rows) count += incoming(row.id);
   return count;
 }
 

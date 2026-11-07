@@ -1,17 +1,30 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  addColumn,
   addRow,
   applyPatches,
+  buildReferenceIndex,
+  commit,
   ConditionCompiler,
   createEmptyProject,
+  createHistory,
   createProductionSample,
+  createReferenceIndexCache,
   createValidationCache,
   moveNodes,
+  redo,
+  removeRows,
+  renameRow,
+  replaceRows,
   sameCalculation,
+  setCell,
+  undo,
   updateNode,
   validateProject,
   type Change,
+  type History,
+  type Id,
   type ProductionGraphAsset,
   type Project,
   type TableAsset,
@@ -77,6 +90,92 @@ describe("validation cache", () => {
     assert.deepEqual(cached, validateProject(next).filter((i) => i.code === "duplicate-id"));
     assert.equal(cached.length, 1);
     assert.equal(cached[0]!.path.at(-1), "id");
+  });
+});
+
+describe("incremental validation and reference index", () => {
+  /** Sample project plus the production sample, with a recipes-like table of 300 rows. */
+  function bigProject(): { project: Project; big: TableAsset; items: TableAsset } {
+    const newId = fixedIds(7);
+    const base = sampleProject();
+    const { tables, graph } = createProductionSample(newId, { items: "PItems", machines: "PMachines", recipes: "PRecipes", graph: "Chain" });
+    const items = base.assets[0] as TableAsset;
+    const recipes = base.assets[1] as TableAsset;
+    const [output, inputs, , , , , , code] = recipes.columns.map((c) => c.id);
+    const rows = Array.from({ length: 300 }, (_, i) => ({
+      id: newId(),
+      name: `Recipe_${i}`,
+      cells: { [output!]: items.rows[i % 2]!.id, [inputs!]: [items.rows[(i + 1) % 2]!.id], [code!]: `C${i}` },
+    }));
+    const big: TableAsset = { ...recipes, rows: [...recipes.rows, ...rows] };
+    const project: Project = { ...base, assets: [items, big, ...base.assets.slice(2), tables.items, tables.machines, tables.recipes, graph] };
+    return { project, big, items };
+  }
+
+  it("gives the same results as a fresh build through edits, undo and redo", () => {
+    const { project, big, items } = bigProject();
+    const [output, , , , , , , code] = big.columns.map((c) => c.id);
+    const name = items.columns[0]!.id;
+    const validationCache = createValidationCache();
+    const indexCache = createReferenceIndexCache();
+    const codes = new Set<string>();
+    const check = (p: Project): void => {
+      const index = buildReferenceIndex(p, indexCache);
+      const fresh = buildReferenceIndex(p);
+      assert.deepEqual(index.broken, fresh.broken);
+      assert.deepEqual(index.references, fresh.references);
+      for (const target of new Set(fresh.references.map((r) => r.target))) assert.deepEqual(index.usedBy(target), fresh.usedBy(target));
+      const issues = validateProject(p, index, validationCache);
+      assert.deepEqual(issues, validateProject(p));
+      for (const issue of issues) codes.add(issue.code);
+    };
+
+    let h: History<Project> = createHistory(project);
+    let now = 0;
+    const edit = (change: (p: Project) => Change | null): void => {
+      const c = change(h.present);
+      assert.ok(c !== null);
+      h = commit(h, c, (now += 10_000));
+      check(h.present);
+    };
+    const row = (r: number): Id => (h.present.assets[1] as TableAsset).rows[r]!.id;
+    check(h.present);
+
+    edit((p) => setCell(p, big.id, row(5), code!, "SMELT_IRON")); // duplicate unique value
+    edit((p) => setCell(p, items.id, items.rows[1]!.id, name, { key: "item.iron_ore", source: "Copy" })); // duplicate loc key
+    edit((p) => addRow(p, big.id, { id: fixedIds(99)(), name: "recipe_7", cells: {} })); // duplicate name, required missing
+    edit((p) => removeRows(p, big.id, new Set([row(0), row(150), row(299)]))); // scattered: paths shift
+    edit((p) => setCell(p, big.id, row(10), output!, fixedIds(123)())); // broken reference
+    edit((p) => removeRows(p, items.id, new Set([items.rows[0]!.id]))); // breaks references into the items table
+    h = undo(undo(h));
+    check(h.present);
+    h = redo(h);
+    check(h.present);
+    edit((p) => replaceRows(p, big.id, (p.assets[1] as TableAsset).rows.slice().reverse())); // a sort: every row moves
+    edit((p) => renameRow(p, big.id, row(3), "Renamed"));
+    edit((p) => setCell(p, big.id, row(3), code!, 42)); // type mismatch
+    edit((p) => addColumn(p, big.id, { id: fixedIds(321)(), name: "Level", type: { kind: "int", min: 0, unique: true } }));
+    edit((p) => ({ label: "move", patches: [{ op: "set", path: ["assets"], value: [...p.assets.slice(1), p.assets[0]!] }] })); // asset moved
+    while (h.past.length > 0) {
+      h = undo(h);
+      check(h.present);
+    }
+    while (h.future.length > 0) {
+      h = redo(h);
+      check(h.present);
+    }
+    for (const c of ["duplicate-value", "duplicate-loc-key", "duplicate-name", "required-missing", "broken-reference", "type-mismatch"]) assert.ok(codes.has(c), c);
+  });
+
+  it("keeps an older index correct after the cache moved on", () => {
+    const { project, big } = bigProject();
+    const cache = createReferenceIndexCache();
+    const old = buildReferenceIndex(project, cache);
+    const next = apply(project, removeRows(project, big.id, new Set([big.rows[1]!.id])));
+    buildReferenceIndex(next, cache);
+    const fresh = buildReferenceIndex(project);
+    assert.deepEqual(old.references, fresh.references);
+    for (const target of new Set(fresh.references.map((r) => r.target))) assert.deepEqual(old.usedBy(target), fresh.usedBy(target));
   });
 });
 

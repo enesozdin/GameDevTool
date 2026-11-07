@@ -146,6 +146,10 @@ Hosted mode adds two small files next to it: `manifest.json` and `sw.js`.
   and the seeded PRNG. Runs are reproducible and the UI never blocks.
 - The expression engine keeps a **dependency graph**: editing a cell recalculates only
   its dependents.
+- Validation and the reference index are **incremental**: unchanged rows keep their
+  objects, so an edit re-checks only the changed rows (`rowDiff`). Project-wide duplicate
+  checks count claims instead of rescanning. `node scripts/bench-validation.ts` measures
+  this on a 200,000-row table.
 - Graphs render only visible nodes and edges (`onlyRenderVisibleElements`); large
   dialogues are split into sub-graphs.
 - A tool's components mount only when that tool is opened. All code is still in the
