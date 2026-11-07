@@ -17,6 +17,7 @@ import {
   pasteGrid,
   printExpression,
   removeRows,
+  columnRenameCapture,
   renameColumn,
   rowNames,
   saveProject,
@@ -24,6 +25,7 @@ import {
   setColumnFormula,
   updateVariable,
   validateProject,
+  variableRenameCapture,
   addRow,
   type Change,
   type Column,
@@ -335,6 +337,23 @@ describe("formula engine: recalculating after edits", () => {
     for (const c of r3.columns) assert.equal(c, r2.get(c.table, c.column));
   });
 
+  it("keeps the result object when the recalculated rows come out the same", () => {
+    const { project, weapons, w, doubled, label } = rich();
+    const engine = new FormulaEngine();
+    const r1 = engine.evaluate(project);
+    // Rarity is read by no formula: every Weapons result stays the same object, so the
+    // validation findings cached for it are kept (no full rescan of the column).
+    const p2 = apply(project, setCell(project, weapons.id, weapons.rows[0]!.id, w.rarity, undefined));
+    const r2 = engine.evaluate(p2);
+    for (const c of r2.columns) assert.equal(c, r1.get(c.table, c.column), c.column);
+    // Base 10 -> 9 changes Doubled but not Label ("big" either way).
+    const p3 = apply(p2, setCell(p2, weapons.id, weapons.rows[0]!.id, w.base, 9));
+    const r3 = engine.evaluate(p3);
+    assert.notEqual(r3.get(weapons.id, doubled), r2.get(weapons.id, doubled));
+    assert.equal(r3.get(weapons.id, label), r2.get(weapons.id, label));
+    assert.deepEqual(snapshot(r3), snapshot(evaluateFormulas(p3)));
+  });
+
   it("matches a fresh evaluation through a sequence of edits, row changes, undo and renames", () => {
     const s = rich();
     const engine = new FormulaEngine();
@@ -433,6 +452,59 @@ describe("formula edits", () => {
     assert.equal(table(p, weapons.id).columns.find((c) => c.name === "Damage")!.formula, "Base * Mat.Mult * (1 + PlayerLevel * 0.1)");
     assert.equal(table(p, weapons.id).columns.find((c) => c.id === dotted)!.formula, "Mat.Level + PlayerLevel");
     assert.equal(table(p, materials.id).columns.find((c) => c.id === shadow)!.formula, "Level + 1");
+  });
+
+  it("refuses a variable rename that a column would capture", () => {
+    const { project, weapons, w, level, newId } = sample();
+    // Weapons has a column Coins: renaming Level to Coins would make Damage read the column.
+    const p = withColumn(project, weapons.id, { id: newId(), name: "Coins", type: { kind: "int" } });
+    assert.deepEqual(variableRenameCapture(p, level.id, "Coins"), { table: "Weapons", column: "Damage" });
+    assert.deepEqual(variableRenameCapture(p, level.id, "coins"), { table: "Weapons", column: "Damage" });
+    assert.equal(updateVariable(p, { ...level, name: "Coins" }), null);
+    // Another name is fine, and the formula follows it.
+    const renamed = apply(p, updateVariable(p, { ...level, name: "Rank" }));
+    assert.equal(table(renamed, weapons.id).columns.find((c) => c.id === w.damage)!.formula, "Base * Mat.Mult * (1 + Rank * 0.1)");
+    // Editing the start value is not a rename.
+    assert.ok(updateVariable(p, { ...level, default: 4 }) !== null);
+  });
+
+  it("allows a variable rename where only a shadowed name or no formula is affected", () => {
+    const { project, materials, level, newId } = sample();
+    // Materials shadows Level with a column, so its formula reads the column either way;
+    // Materials has a column Coins but no formula that uses the variable.
+    let p = withColumn(project, materials.id, { id: newId(), name: "Level", type: { kind: "int" } });
+    p = withColumn(p, materials.id, { id: newId(), name: "Coins", type: { kind: "int" } });
+    p = withColumn(p, materials.id, { id: newId(), name: "Next", type: { kind: "int" }, formula: "Level + 1" });
+    assert.equal(variableRenameCapture(p, level.id, "Coins"), undefined);
+  });
+
+  it("refuses a column rename that would capture a variable or another column", () => {
+    const { project, materials, weapons, m, w, newId } = sample();
+    // Renaming Base to Level would make Damage read the column instead of the variable.
+    assert.deepEqual(columnRenameCapture(project, weapons.id, w.base, "Level"), { table: "Weapons", column: "Damage" });
+    assert.equal(renameColumn(project, weapons.id, w.base, "Level"), null);
+    // Renaming Tier (after Mult) to Mult leaves Mat.Mult on the first Mult: allowed, a
+    // duplicate name that validation reports. Inserting a column before Mult and renaming
+    // it to Mult would capture Mat.Mult.
+    assert.equal(columnRenameCapture(project, materials.id, m.tier, "Mult"), undefined);
+    const first = newId();
+    const t = table(project, materials.id);
+    const p = applyPatches(project, [{ op: "insert", path: ["assets", project.assets.indexOf(t), "columns"], index: 0, value: { id: first, name: "Extra", type: { kind: "float" } } }]).value;
+    assert.deepEqual(columnRenameCapture(p, materials.id, first, "Mult"), { table: "Weapons", column: "Damage" });
+    assert.equal(renameColumn(p, materials.id, first, "Mult"), null);
+    // The renamed column itself is rewritten, so renaming Mult is fine.
+    assert.equal(columnRenameCapture(project, materials.id, m.mult, "Factor"), undefined);
+  });
+
+  it("allows a rename that turns a formula error into a value", () => {
+    const { project, weapons, w, newId } = sample();
+    const fixme = newId();
+    // "Bonus" names nothing yet: the formula fails; naming a column Bonus fixes it.
+    const p = withColumn(project, weapons.id, { id: fixme, name: "Fixme", type: { kind: "float" }, formula: "Bonus * 2" });
+    assert.ok(evaluateFormulas(p).get(weapons.id, fixme)!.error !== undefined);
+    assert.equal(columnRenameCapture(p, weapons.id, w.base, "Bonus"), undefined);
+    const q = apply(p, renameColumn(p, weapons.id, w.base, "Bonus"));
+    assert.equal(evaluateFormulas(q).get(weapons.id, fixme)!.error, undefined);
   });
 });
 

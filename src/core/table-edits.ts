@@ -7,7 +7,7 @@ import { IdentifierSchema, type Id } from "./model/primitives.ts";
 import type { Project } from "./model/project.ts";
 import { isRoleColumn, TABLE_LIMITS, type CellValue, type Column, type ColumnType, type Row, type ScalarType, type TableAsset } from "./model/table.ts";
 import type { IdGenerator } from "./ids.ts";
-import { renameColumnInFormulas } from "./formulas.ts";
+import { columnRenameCapture, renameColumnInFormulas } from "./formulas.ts";
 import { err, ok, type Result } from "./result.ts";
 
 export function isValidIdentifier(name: string): boolean {
@@ -98,8 +98,11 @@ export function renameColumn(project: Project, tableId: Id, columnId: Id, name: 
   if (at === null || !isValidIdentifier(name)) return null;
   const i = at.table.columns.findIndex((c) => c.id === columnId);
   if (i < 0 || at.table.columns[i]!.name === name) return null;
+  const caseOnly = at.table.columns[i]!.name.toLowerCase() === name.toLowerCase();
+  // Refused when a formula would then read something else (columnRenameCapture).
+  if (!caseOnly && columnRenameCapture(project, tableId, columnId, name) !== undefined) return null;
   // Formulas that name the column (here, or through references) follow the rename.
-  const formulas = at.table.columns[i]!.name.toLowerCase() === name.toLowerCase() ? [] : renameColumnInFormulas(project, tableId, columnId, name);
+  const formulas = caseOnly ? [] : renameColumnInFormulas(project, tableId, columnId, name);
   return {
     label: "rename-column",
     coalesceKey: `rename-column:${columnId}`,

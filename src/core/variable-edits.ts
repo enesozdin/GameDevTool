@@ -11,6 +11,7 @@ import type { Project, Variable } from "./model/project.ts";
 import { tokenize } from "./expr/parser.ts";
 import { ExprException, KEYWORDS } from "./expr/syntax.ts";
 import { fitsVariable } from "./production/gates.ts";
+import { variableRenameCapture } from "./formulas.ts";
 
 export const MAX_VARIABLES = 10_000;
 
@@ -62,7 +63,8 @@ export function removeVariable(project: Project, id: Id): Change | null {
 
 /**
  * Replaces a variable (type, default, options, description). The id is kept. A new name
- * is validated and rewritten in every expression that uses the old one.
+ * is validated and rewritten in every expression that uses the old one. A rename that
+ * would change what a formula reads (variableRenameCapture) is refused: null.
  */
 export function updateVariable(project: Project, next: Variable): Change | null {
   const index = project.manifest.variables.findIndex((v) => v.id === next.id);
@@ -71,8 +73,10 @@ export function updateVariable(project: Project, next: Variable): Change | null 
   if (prev.name !== next.name && !isValidVariableName(project, next.name, next.id)) return null;
   if (next.type === "enum" && !next.options.some((o) => o.id === next.default)) return null;
   if (JSON.stringify(prev) === JSON.stringify(next)) return null;
+  const renamed = prev.name.toLowerCase() !== next.name.toLowerCase();
+  if (renamed && variableRenameCapture(project, next.id, next.name) !== undefined) return null;
   const patches: Patch[] = [{ op: "set", path: ["manifest", "variables", index], value: next }];
-  if (prev.name.toLowerCase() !== next.name.toLowerCase()) patches.push(...renameInExpressions(project, prev.name, next.name));
+  if (renamed) patches.push(...renameInExpressions(project, prev.name, next.name));
   patches.push(...dropScenarioValues(project, next.id, next));
   return { label: prev.name === next.name ? "edit-variable" : "rename-variable", coalesceKey: `variable:${next.id}`, patches };
 }

@@ -124,6 +124,8 @@ export const en = {
     moreHidden: (n: number) => `${n} more not shown. Use the search.`,
     name: "Name",
     nameInvalid: "Use letters, digits and _ (not starting with a digit), unique, not and/or/not/true/false.",
+    renameChangesFormula: (name: string, table: string, column: string) =>
+      `Not renamed: the formula of ${table}.${column} would then read the column ${name} instead of this variable. Choose another name.`,
     type: "Type",
     types: { bool: "Yes/No", int: "Integer", float: "Number", string: "Text", enum: "Choice (enum)" } as Record<string, string>,
     defaultValue: "Start value",

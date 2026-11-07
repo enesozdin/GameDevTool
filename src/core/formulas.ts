@@ -57,6 +57,14 @@ export interface FormulaColumnResult {
   readonly cellErrors: ReadonlyMap<number, ExprError>;
   /** Value of row `i`; undefined when the column or that cell has an error. */
   value(i: number): Value | undefined;
+  /**
+   * Set when this result was made from the engine's previous result for the column by
+   * recalculating some rows: the first `head` and the last `tail` rows are copied from
+   * `prev` (same positions from each end), everything between was recalculated. Lets
+   * checks over the values (validation) update from `prev` instead of reading every row.
+   * Only the newest result keeps it: the engine drops it from `prev` when it derives the next.
+   */
+  readonly derived: { readonly prev: FormulaColumnResult; readonly head: number; readonly tail: number } | undefined;
 }
 
 export interface FormulaResults {
@@ -75,6 +83,7 @@ class ColumnResult implements FormulaColumnResult {
   readonly nums: Float64Array | null;
   /** Strings and bools; undefined marks a cell error. */
   readonly vals: (Value | undefined)[] | null;
+  derived: { readonly prev: ColumnResult; readonly head: number; readonly tail: number } | undefined = undefined;
 
   constructor(table: Id, column: Id, kind: FormulaKind, length: number, error?: ExprError) {
     this.table = table;
@@ -105,6 +114,21 @@ class ColumnResult implements FormulaColumnResult {
     if (this.nums !== null) this.nums[i] = Number.NaN;
     else if (this.vals !== null) this.vals[i] = undefined;
     this.cellErrors.set(i, e);
+  }
+
+  /**
+   * Whether rows [lo, hi) hold the same values and cell errors as `prev`, a result of the
+   * same length. Only the recalculated range is compared: the rest was copied from `prev`.
+   */
+  sameRange(prev: ColumnResult, lo: number, hi: number): boolean {
+    if (this.length !== prev.length || (this.nums === null) !== (prev.nums === null)) return false;
+    for (let i = lo; i < hi; i++) {
+      if (this.nums !== null ? !Object.is(this.nums[i], prev.nums![i]) : this.vals![i] !== prev.vals![i]) return false;
+      const e = this.cellErrors.get(i);
+      const f = prev.cellErrors.get(i);
+      if (e !== f && !sameError(e, f)) return false;
+    }
+    return true;
   }
 
   /** Copies the unchanged head [0, head) and tail (last `tail` rows) from a previous result. */
@@ -485,12 +509,17 @@ export class FormulaEngine {
             diffs.set(prev!.rows, diff);
           }
           result.copyEnds(prev!.result, diff.head, diff.tail);
+          // At most one step of history: prev's own link is not needed any more.
+          prev!.result.derived = undefined;
+          result.derived = { prev: prev!.result, head: diff.head, tail: diff.tail };
           lo = diff.head;
           hi = rows.length - diff.tail;
         }
         this.compute(result, table, expr, sources, tables, results, lo, hi, whole);
-        if (mode === ROWS && lo >= hi && rows.length === prev!.result.length) {
-          // Rows were replaced by equal objects only: keep the old result object.
+        if (mode === ROWS && prev!.result.sameRange(result, lo, hi)) {
+          // The recalculated rows came out the same (an edit of a column this formula does not
+          // read, or rows replaced by equal objects): keep the old result object, so its
+          // dependents and the validation findings cached for it stay as they are.
           result = prev!.result;
           mode = SAME;
         }
@@ -695,4 +724,91 @@ export function renameColumnInFormulas(project: Project, tableId: Id, columnId: 
     });
   });
   return patches;
+}
+
+/** A formula that a rename would make read something else: its table and column names. */
+export interface FormulaCapture {
+  readonly table: string;
+  readonly column: string;
+}
+
+/** Names as they are, or as they would be after a rename. */
+interface NameWorld {
+  columnName(table: TableAsset, column: Column): string;
+  variableName(variable: Variable): string;
+}
+
+const AS_IS: NameWorld = { columnName: (_t, c) => c.name, variableName: (v) => v.name };
+
+/**
+ * What each part of a name chain resolves to, like FormulaScope.resolve: "c:<table>:<column>"
+ * or "v:<variable>". Undefined where the chain does not resolve (a formula error).
+ */
+function chainTargets(table: TableAsset, parts: readonly string[], tables: ReadonlyMap<Id, TableAsset>, variables: readonly Variable[], world: NameWorld): string[] | undefined {
+  const out: string[] = [];
+  let current: TableAsset | undefined = table;
+  for (let i = 0; i < parts.length; i++) {
+    const key = parts[i]!.toLowerCase();
+    const column: Column | undefined = current?.columns.find((c) => world.columnName(current!, c).toLowerCase() === key);
+    if (column === undefined) {
+      if (i > 0 || parts.length > 1 || KEYWORDS.has(key)) return undefined;
+      const variable = variables.find((v) => world.variableName(v).toLowerCase() === key);
+      return variable === undefined ? undefined : [`v:${variable.id}`];
+    }
+    out.push(`c:${current!.id}:${column.id}`);
+    if (i < parts.length - 1) current = column.type.kind === "reference" ? tables.get(column.type.table) : undefined;
+  }
+  return out;
+}
+
+/**
+ * The first formula whose names would resolve to something else after a rename, in which
+ * `renamed` is the target ("c:..." or "v:...") that gets the name `to`. Formulas naming
+ * the renamed target itself are rewritten by the rename and only count when the new name
+ * then resolves elsewhere (another column already called `to`). A name that does not
+ * resolve before the rename may resolve after it: that turns an error into a value, not
+ * one value into another, so it is allowed. Formulas that do not parse are skipped.
+ */
+function findCapture(project: Project, renamed: string, to: string, after: NameWorld): FormulaCapture | undefined {
+  const tables = tableMap(project);
+  const variables = project.manifest.variables;
+  for (const asset of project.assets) {
+    if (asset.kind !== "table") continue;
+    for (const column of asset.columns) {
+      if (column.formula === undefined) continue;
+      const parsed = parseExpression(column.formula);
+      if (!parsed.ok) continue;
+      const chains: NamePart[][] = [];
+      nameChains(parsed.value, chains);
+      for (const chain of chains) {
+        const names = chain.map((p) => p.name);
+        const before = chainTargets(asset, names, tables, variables, AS_IS);
+        if (before === undefined) continue;
+        // The rename rewrites exactly the parts that named the renamed target.
+        const rewritten = names.map((name, i) => (before[i] === renamed ? to : name));
+        const next = chainTargets(asset, rewritten, tables, variables, after);
+        if (next === undefined || next[next.length - 1] !== before[before.length - 1]) return { table: asset.name, column: column.name };
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * A formula that renaming variable `variableId` to `to` would change (for example a column
+ * called `to` in its table would then shadow the variable). Undefined when the rename is safe.
+ */
+export function variableRenameCapture(project: Project, variableId: Id, to: string): FormulaCapture | undefined {
+  const after: NameWorld = { columnName: AS_IS.columnName, variableName: (v) => (v.id === variableId ? to : v.name) };
+  return findCapture(project, `v:${variableId}`, to, after);
+}
+
+/**
+ * A formula that renaming column `columnId` of table `tableId` to `to` would change (for
+ * example one that reads a variable called `to`, which the column would then shadow).
+ * Undefined when the rename is safe.
+ */
+export function columnRenameCapture(project: Project, tableId: Id, columnId: Id, to: string): FormulaCapture | undefined {
+  const after: NameWorld = { columnName: (t, c) => (t.id === tableId && c.id === columnId ? to : c.name), variableName: AS_IS.variableName };
+  return findCapture(project, `c:${tableId}:${columnId}`, to, after);
 }

@@ -6,6 +6,7 @@ import {
   createVariable,
   isValidVariableName,
   removeVariable,
+  variableRenameCapture,
   uniqueVariableName,
   updateVariable,
   withEnumOptions,
@@ -85,8 +86,11 @@ function VariableRow({ strings, project, variable: v, newId, commit }: RowProps)
         id={`${base}-name`}
         label={s.name}
         value={v.name}
-        isValid={(name) => isValidVariableName(project, name, v.id)}
-        invalidMessage={s.nameInvalid}
+        isValid={(name) => isValidVariableName(project, name, v.id) && (name.toLowerCase() === v.name.toLowerCase() || variableRenameCapture(project, v.id, name) === undefined)}
+        invalidMessage={(name) => {
+          const capture = isValidVariableName(project, name, v.id) ? variableRenameCapture(project, v.id, name) : undefined;
+          return capture === undefined ? s.nameInvalid : s.renameChangesFormula(name, capture.table, capture.column);
+        }}
         onCommit={(name) => update({ ...v, name })}
       />
       <div className="field">
@@ -166,7 +170,8 @@ interface CommitTextProps {
   readonly label: string;
   readonly value: string;
   readonly isValid: (value: string) => boolean;
-  readonly invalidMessage: string;
+  /** Shown while the draft is invalid; a function gets the draft, for a message about it. */
+  readonly invalidMessage: string | ((value: string) => string);
   readonly onCommit: (value: string) => void;
 }
 
@@ -204,7 +209,7 @@ function CommitText({ id, label, value, isValid, invalidMessage, onCommit }: Com
       />
       {invalid && (
         <p id={errorId} className="field-error" role="alert">
-          {invalidMessage}
+          {typeof invalidMessage === "string" ? invalidMessage : invalidMessage(draft!)}
         </p>
       )}
     </div>

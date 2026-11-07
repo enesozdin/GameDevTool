@@ -1234,13 +1234,82 @@ function mismatch(path: IssuePath, expected: string): Issue {
 // Formula columns: errors and column constraints on the computed values. One issue per
 // column and kind of problem (pointing at the first cell), since one bad input can fail
 // every row. Findings are cached per result object, which the engine keeps while the
-// column's inputs do not change.
+// column's inputs do not change. The counts behind them are updated from the previous
+// result when the engine recalculated only some rows (FormulaColumnResult.derived), so an
+// edit costs the changed rows, not the column. The first offending row is then found by a
+// scan from the top that stops at it, and only while there is one.
 // ---------------------------------------------------------------------------------------
+
+/** Constraints of a formula column on its computed values. */
+interface Constraints {
+  readonly outOfRange: ((v: Value) => boolean) | undefined;
+  readonly tooLong: ((v: Value) => boolean) | undefined;
+  readonly maxLength: number | undefined;
+  readonly unique: boolean;
+}
+
+function constraintsOf(t: ColumnType): Constraints {
+  const outOfRange =
+    (t.kind === "int" || t.kind === "float") && (t.min !== undefined || t.max !== undefined)
+      ? (v: Value) => (t.min !== undefined && (v as number) < t.min) || (t.max !== undefined && (v as number) > t.max)
+      : undefined;
+  const maxLength = t.kind === "string" ? t.maxLength : undefined;
+  return {
+    outOfRange,
+    tooLong: maxLength === undefined ? undefined : (v: Value) => (v as string).length > maxLength,
+    maxLength,
+    unique: (t.kind === "int" || t.kind === "string") && t.unique === true,
+  };
+}
+
+/** Counts over a result's values; moved from one result's check to the next one's. */
+class ConstraintCounts {
+  outOfRange = 0;
+  tooLong = 0;
+  /** Value -> rows holding it (unique columns only). */
+  readonly values: Map<Value, number> | undefined;
+  /** Rows whose value an earlier row already holds: sum over values of (rows - 1). */
+  duplicates = 0;
+
+  readonly rules: Constraints;
+
+  constructor(rules: Constraints) {
+    this.rules = rules;
+    this.values = rules.unique ? new Map() : undefined;
+  }
+
+  /** Adds (+1) or removes (-1) the values of rows [lo, hi). */
+  range(result: FormulaColumnResult, lo: number, hi: number, delta: 1 | -1): void {
+    const { outOfRange, tooLong } = this.rules;
+    const values = this.values;
+    if (outOfRange === undefined && tooLong === undefined && values === undefined) return;
+    for (let r = lo; r < hi; r++) {
+      const v = result.value(r);
+      if (v === undefined) continue;
+      if (outOfRange !== undefined && outOfRange(v)) this.outOfRange += delta;
+      if (tooLong !== undefined && tooLong(v)) this.tooLong += delta;
+      if (values !== undefined) {
+        const n = values.get(v) ?? 0;
+        if (delta > 0) {
+          if (n > 0) this.duplicates++;
+          values.set(v, n + 1);
+        } else {
+          if (n > 1) this.duplicates--;
+          if (n <= 1) values.delete(v);
+          else values.set(v, n - 1);
+        }
+      }
+    }
+  }
+}
 
 interface FormulaCheck {
   readonly assetIndex: number;
   readonly columnIndex: number;
+  readonly type: ColumnType;
   readonly issues: readonly Issue[];
+  /** Taken (undefined) once a later result's check was made from it. */
+  counts: ConstraintCounts | undefined;
 }
 
 function checkFormulaResults(project: Project, formulas: FormulaResults, cache: ValidationCache, issues: IssueSink): void {
@@ -1252,8 +1321,8 @@ function checkFormulaResults(project: Project, formulas: FormulaResults, cache: 
       const result = formulas.get(asset.id, column.id);
       if (result === undefined) return;
       let check = cache.formulas.get(result);
-      if (check === undefined || check.assetIndex !== a || check.columnIndex !== c) {
-        check = { assetIndex: a, columnIndex: c, issues: formulaResultIssues(column, a, c, result) };
+      if (check === undefined || check.assetIndex !== a || check.columnIndex !== c || check.type !== column.type) {
+        check = formulaCheck(column, a, c, result, check, cache);
         cache.formulas.set(result, check);
       }
       for (const issue of check.issues) issues.push(issue);
@@ -1261,8 +1330,29 @@ function checkFormulaResults(project: Project, formulas: FormulaResults, cache: 
   });
 }
 
-function formulaResultIssues(column: Column, a: number, c: number, result: FormulaColumnResult): Issue[] {
-  if (result.error !== undefined) return [exprIssue(["assets", a, "columns", c, "formula"], result.error)];
+/** A check of `result`: from `same` (this result, other paths), from the previous result's counts, or from all rows. */
+function formulaCheck(column: Column, a: number, c: number, result: FormulaColumnResult, same: FormulaCheck | undefined, cache: ValidationCache): FormulaCheck {
+  const type = column.type;
+  if (result.error !== undefined) return { assetIndex: a, columnIndex: c, type, issues: [exprIssue(["assets", a, "columns", c, "formula"], result.error)], counts: undefined };
+  let counts = same !== undefined && same.type === type ? same.counts : undefined;
+  if (counts === undefined && result.derived !== undefined) {
+    const { prev, head, tail } = result.derived;
+    const before = cache.formulas.get(prev);
+    if (before !== undefined && before.type === type && before.counts !== undefined) {
+      counts = before.counts;
+      before.counts = undefined;
+      counts.range(prev, head, prev.length - tail, -1);
+      counts.range(result, head, result.length - tail, 1);
+    }
+  }
+  if (counts === undefined) {
+    counts = new ConstraintCounts(constraintsOf(type));
+    counts.range(result, 0, result.length, 1);
+  }
+  return { assetIndex: a, columnIndex: c, type, issues: formulaIssues(column, a, result, counts), counts };
+}
+
+function formulaIssues(column: Column, a: number, result: FormulaColumnResult, counts: ConstraintCounts): Issue[] {
   const out: Issue[] = [];
   const cell = (r: number): IssuePath => ["assets", a, "rows", r, "cells", column.id];
   if (result.cellErrors.size > 0) {
@@ -1271,41 +1361,33 @@ function formulaResultIssues(column: Column, a: number, c: number, result: Formu
     const error = result.cellErrors.get(first)!;
     out.push({ severity: "error", code: "formula-cell-errors", path: cell(first), params: { count: result.cellErrors.size, error: error.code } });
   }
-  const t = column.type;
-  const count = (code: string, bad: (v: Value) => boolean, params: Record<string, string | number> = {}) => {
-    let n = 0;
-    let first = -1;
+  const firstWhere = (bad: (v: Value) => boolean): number => {
     for (let r = 0; r < result.length; r++) {
       const v = result.value(r);
-      if (v !== undefined && bad(v)) {
-        if (n++ === 0) first = r;
-      }
+      if (v !== undefined && bad(v)) return r;
     }
-    if (n > 0) out.push({ severity: "error", code, path: cell(first), params: { ...params, count: n } });
+    return -1;
   };
-  if ((t.kind === "int" || t.kind === "float") && (t.min !== undefined || t.max !== undefined)) {
-    count("out-of-range", (v) => (t.min !== undefined && (v as number) < t.min) || (t.max !== undefined && (v as number) > t.max));
+  const { outOfRange, tooLong, maxLength } = counts.rules;
+  if (outOfRange !== undefined && counts.outOfRange > 0) {
+    out.push({ severity: "error", code: "out-of-range", path: cell(firstWhere(outOfRange)), params: { count: counts.outOfRange } });
   }
-  if (t.kind === "string" && t.maxLength !== undefined) {
-    const max = t.maxLength;
-    count("too-long", (v) => (v as string).length > max, { limit: max });
+  if (tooLong !== undefined && counts.tooLong > 0) {
+    out.push({ severity: "error", code: "too-long", path: cell(firstWhere(tooLong)), params: { limit: maxLength!, count: counts.tooLong } });
   }
-  if ((t.kind === "int" || t.kind === "string") && t.unique === true) {
+  if (counts.duplicates > 0) {
+    // The first row whose value an earlier row holds.
     const seen = new Map<Value, number>();
-    let n = 0;
-    let at = -1;
-    let firstRow = -1;
     for (let r = 0; r < result.length; r++) {
       const v = result.value(r);
       if (v === undefined) continue;
       const prev = seen.get(v);
-      if (prev === undefined) seen.set(v, r);
-      else if (n++ === 0) {
-        at = r;
-        firstRow = prev;
+      if (prev !== undefined) {
+        out.push({ severity: "error", code: "duplicate-value", path: cell(r), params: { firstRow: prev, count: counts.duplicates } });
+        break;
       }
+      seen.set(v, r);
     }
-    if (n > 0) out.push({ severity: "error", code: "duplicate-value", path: cell(at), params: { firstRow, count: n } });
   }
   return out;
 }
