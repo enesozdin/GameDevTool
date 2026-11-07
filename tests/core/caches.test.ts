@@ -14,6 +14,7 @@ import {
   createProductionSample,
   createReferenceIndexCache,
   createValidationCache,
+  FormulaEngine,
   moveNodes,
   redo,
   removeRows,
@@ -21,6 +22,7 @@ import {
   replaceRows,
   sameCalculation,
   setCell,
+  setColumnFormula,
   undo,
   updateNode,
   validateProject,
@@ -95,6 +97,69 @@ describe("validation cache", () => {
     assert.deepEqual(cached, validateProject(next).filter((i) => i.code === "duplicate-id"));
     assert.equal(cached.length, 1);
     assert.equal(cached[0]!.path.at(-1), "id");
+  });
+});
+
+describe("validation cache with formula columns", () => {
+  it("gives the same findings as a full validation across edits, moves and undo", () => {
+    const newId = fixedIds(77);
+    const base = sampleProject();
+    const items = base.assets[0] as TableAsset;
+    const recipes = base.assets[1] as TableAsset;
+    const weight = items.columns[1]!.id;
+    const tier = recipes.columns[3]!.id;
+    const heavy = newId();
+    // Own-row formula with a max (IronOre: 1 * 10 > 5), a cross-table lookup, and a unique int.
+    const withItems: TableAsset = { ...items, columns: [...items.columns, { id: heavy, name: "Heavy", type: { kind: "float", max: 5 }, formula: "Weight * 10" }] };
+    const withRecipes: TableAsset = {
+      ...recipes,
+      columns: [
+        ...recipes.columns,
+        { id: newId(), name: "OutWeight", type: { kind: "float" }, formula: "Output.Weight * 2" },
+        { id: newId(), name: "Rank", type: { kind: "int", unique: true }, formula: "Tier" },
+      ],
+    };
+    let project: Project = { ...base, assets: [withItems, withRecipes, ...base.assets.slice(2)] };
+
+    const engine = new FormulaEngine();
+    const validationCache = createValidationCache();
+    const indexCache = createReferenceIndexCache();
+    const codes = new Set<string>();
+    const check = (p: Project): void => {
+      const cached = validateProject(p, buildReferenceIndex(p, indexCache), validationCache, engine.evaluate(p));
+      assert.deepEqual(cached, validateProject(p));
+      for (const issue of cached) codes.add(issue.code);
+    };
+    let history: History<Project> = createHistory(project);
+    const edit = (change: Change | null): void => {
+      assert.ok(change !== null);
+      history = commit(history, change, 0);
+      project = history.present;
+      check(project);
+    };
+    check(project);
+    const [ironOre, ironBar] = withItems.rows;
+    // An input of both formulas.
+    edit(setCell(project, items.id, ironOre!.id, weight, 0.2));
+    // A value left in a formula column (formula-stored-values), counted incrementally.
+    edit(setCell(project, items.id, ironBar!.id, heavy, 7));
+    // A second recipe with Tier 1: the computed Rank repeats.
+    const extra = newId();
+    edit(addRow(project, recipes.id, { id: extra, name: "SmeltAgain", cells: { [recipes.columns[0]!.id]: ironBar!.id, [tier]: 1 } }));
+    edit(removeRows(project, recipes.id, new Set([extra])));
+    edit(addRow(project, recipes.id, { id: newId(), name: "SmeltTwice", cells: { [recipes.columns[0]!.id]: ironOre!.id, [tier]: 1 } }));
+    // The tables move in the asset list: paths of cached formula findings must follow.
+    project = { ...project, assets: [...project.assets.slice(2), ...project.assets.slice(0, 2)] };
+    history = createHistory(project);
+    check(project);
+    // Turning a formula off keeps the computed values as plain cells.
+    edit(setColumnFormula(project, items.id, heavy, undefined, engine.evaluate(project)));
+    while (history.past.length > 0) {
+      history = undo(history);
+      project = history.present;
+      check(project);
+    }
+    for (const code of ["formula-stored-values", "out-of-range", "duplicate-value"]) assert.ok(codes.has(code), code);
   });
 });
 

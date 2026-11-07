@@ -145,7 +145,8 @@ Hosted mode adds two small files next to it: `manifest.json` and `sw.js`.
 - Simulations run in a **Web Worker** with typed arrays (`Float64Array`, `Uint32Array`)
   and the seeded PRNG. Runs are reproducible and the UI never blocks.
 - The expression engine keeps a **dependency graph**: editing a cell recalculates only
-  its dependents.
+  its dependents (formula columns that read it; own-row formulas only for the changed
+  rows).
 - Validation and the reference index are **incremental**: unchanged rows keep their
   objects, so an edit re-checks only the changed rows (`rowDiff`). Project-wide duplicate
   checks count claims instead of rescanning, and the index keeps each table's "used by"
@@ -345,7 +346,7 @@ ready after ~64 days.
 | Copy/paste with Excel / Google Sheets (TSV): one value fills the selection, blocks repeat over it, rows past the end are appended; invalid fields are counted and left unchanged | ✅ |
 | Fill-down (Ctrl+D; localizable text keeps each cell's key), bulk edit of selected cells (Ctrl+Enter), clear (Delete), Yes/No toggle (Space), delete selected rows; each one undo step | ✅ |
 | Per-column validation: min/max, required, unique, pattern; editing column constraints in the UI | |
-| Formulas: column-level and cross-table lookups, dependency graph | |
+| Formulas ([spec](EXPRESSIONS.md#table-formulas)): column formulas over same-row columns and variables, cross-table lookups through reference columns (`Weapon.Material.Mult`), one dependency graph across tables with cycle detection and incremental recalculation, formula bar with live errors, computed values in copy and CSV export | ✅ |
 | Curve editor with presets | |
 | CSV import with column-type detection | |
 | Compare two versions of a table | |
@@ -353,6 +354,9 @@ ready after ~64 days.
 
 ### Backlog (post-MVP)
 - Production chain optimizer: choose between alternative recipes with linear programming
+- Formulas on built-in role columns (recipe time, machine speed): the production solver
+  and the Monte Carlo worker would read computed values
+- Formula functions for curves (`curve(XpCurve, Level)`) and aggregates over other tables
 - Level / flow diagrams (level progression, gating, metroidvania maps)
 - Narrative timeline & character relationship maps
 - Playtest feedback collection & analytics import

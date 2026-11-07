@@ -48,6 +48,8 @@ function print(e: Expr, scope: Scope | undefined, outer: number): string {
       return JSON.stringify(e.value);
     case "name":
       return scope?.byName.get(e.name.toLowerCase())?.name ?? e.name;
+    case "member":
+      return `${print(e.object, scope, 0)}.${e.name}`;
     case "call":
       return `${e.name.toLowerCase()}(${e.args.map((a) => print(a, scope, 0)).join(", ")})`;
     case "unary": {

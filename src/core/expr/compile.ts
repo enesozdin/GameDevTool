@@ -35,10 +35,22 @@ export interface ScopeEntry {
   readonly variable?: Id;
 }
 
+/** One part of a dotted name, as written. */
+export interface NamePart {
+  readonly name: string;
+  readonly span: Span;
+}
+
 /** Names an expression can use. Lookup is case-insensitive, like identifier uniqueness. */
 export interface Scope {
   readonly entries: readonly ScopeEntry[];
   readonly byName: ReadonlyMap<string, ScopeEntry>;
+  /**
+   * Resolves a name `byName` does not hold, or a dotted name (`Weapon.Damage`, table
+   * formulas). May add entries; throws an ExprException (see `fail`) when the name is not
+   * valid. Scopes without it accept plain names from `byName` only.
+   */
+  readonly resolve?: (parts: readonly NamePart[]) => ScopeEntry;
 }
 
 /**
@@ -182,9 +194,9 @@ class Compiler {
         const s = e.value;
         return { type: STRING, fn: () => s, literal: s };
       }
-      case "name": {
-        const entry = this.scope.byName.get(e.name.toLowerCase());
-        if (entry === undefined) fail("expr-unknown-name", e.span, { name: e.name });
+      case "name":
+      case "member": {
+        const entry = this.lookup(e);
         this.slots.add(entry.slot);
         const slot = entry.slot;
         return { type: entry.type, fn: (v) => v[slot]! };
@@ -203,6 +215,28 @@ class Compiler {
       case "call":
         return this.call(e);
     }
+  }
+
+  private lookup(e: Expr & { kind: "name" | "member" }): ScopeEntry {
+    if (e.kind === "name") {
+      const entry = this.scope.byName.get(e.name.toLowerCase());
+      if (entry !== undefined) return entry;
+      if (this.scope.resolve !== undefined) return this.scope.resolve([{ name: e.name, span: e.span }]);
+      fail("expr-unknown-name", e.span, { name: e.name });
+    }
+    // Flatten a.b.c (left-nested members) into its parts.
+    const parts: NamePart[] = [];
+    let x: Expr = e;
+    while (x.kind === "member") {
+      parts.push({ name: x.name, span: x.nameSpan });
+      x = x.object;
+    }
+    if (x.kind !== "name") fail("expr-unexpected-token", x.span, { found: "." });
+    parts.push({ name: x.name, span: x.span });
+    parts.reverse();
+    // Conditions have no dotted names: the "." itself is the error.
+    if (this.scope.resolve === undefined) fail("expr-unexpected-token", { start: parts[0]!.span.end, end: parts[1]!.span.start }, { found: "." });
+    return this.scope.resolve(parts);
   }
 
   private expect(t: Typed, type: ValueType, span: Span): Fn {

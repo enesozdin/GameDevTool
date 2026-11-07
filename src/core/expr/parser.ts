@@ -1,7 +1,7 @@
 /**
  * Tokenizer + recursive-descent parser. Precedence, lowest first (docs/EXPRESSIONS.md):
  *
- *   or  →  and  →  not  →  comparison (non-associative)  →  + -  →  * / %  →  unary -  →  ^  →  call / primary
+ *   or  →  and  →  not  →  comparison (non-associative)  →  + -  →  * / %  →  unary -  →  ^  →  call / member / primary
  *
  * `not` binds looser than comparisons (as in Python), so `not Level >= 5` means
  * `not (Level >= 5)`. `^` is right-associative and binds tighter than unary minus:
@@ -36,6 +36,7 @@ const OPERATORS: readonly (readonly [string, string])[] = [
   ["(", "("],
   [")", ")"],
   [",", ","],
+  [".", "."],
 ];
 
 const ESCAPES: Readonly<Record<string, string>> = { '"': '"', "\\": "\\", n: "\n", t: "\t" };
@@ -271,7 +272,7 @@ class Parser {
         return { kind: "string", value: t.text, span: t };
       case "name": {
         if (t.text === "true" || t.text === "false") return { kind: "bool", value: t.text === "true", span: t };
-        if (!this.isOp("(")) return { kind: "name", name: t.text, span: t };
+        if (!this.isOp("(")) return this.members({ kind: "name", name: t.text, span: t });
         this.next();
         this.enter(t);
         const args: Expr[] = [];
@@ -300,6 +301,21 @@ class Parser {
       default:
         return this.unexpected(t);
     }
+  }
+
+  /** `a.b.c`: member access after a name. Each `.` is one nesting level. */
+  private members(first: Expr): Expr {
+    if (!this.isOp(".")) return first;
+    const depth = this.depth;
+    let object = first;
+    while (this.isOp(".")) {
+      this.enter(this.next());
+      const t = this.next();
+      if (t.kind !== "name" || t.text === "true" || t.text === "false") this.unexpected(t);
+      object = { kind: "member", object, name: t.text, nameSpan: t, span: { start: first.span.start, end: t.end } };
+    }
+    this.depth = depth;
+    return object;
   }
 
   private expect(text: string): Token {

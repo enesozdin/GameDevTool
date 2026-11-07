@@ -26,6 +26,7 @@ import {
   undoLabel,
   validateProject,
   createValidationCache,
+  FormulaEngine,
   type Asset,
   type Change,
   type FolderIo,
@@ -94,7 +95,10 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
   const indexCache = useMemo(createReferenceIndexCache, []);
   const index = useMemo(() => buildReferenceIndex(project, indexCache), [project, indexCache]);
   const validationCache = useMemo(createValidationCache, []);
-  const issues = useMemo(() => validateProject(project, index, validationCache), [project, index, validationCache]);
+  // Formula columns; recalculates only what an edit touched (see core/formulas.ts).
+  const formulaEngine = useMemo(() => new FormulaEngine(), []);
+  const formulas = useMemo(() => formulaEngine.evaluate(project), [formulaEngine, project]);
+  const issues = useMemo(() => validateProject(project, index, validationCache, formulas), [project, index, validationCache, formulas]);
   const selected = selectedId === null ? undefined : project.assets.find((a) => a.id === selectedId);
   // Kept by the index cache: no pass over the rows of a selected table on each edit.
   const referenceCount = useMemo(() => (selected ? index.incomingCount(selected) : 0), [index, selected]);
@@ -509,6 +513,7 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
                   project={project}
                   index={index}
                   table={selected}
+                  formulas={formulas}
                   newId={newId}
                   commit={commitChange}
                   saveFile={downloadText}

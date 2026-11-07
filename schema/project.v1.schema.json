@@ -49,6 +49,10 @@
                       "maxLength": 10000,
                       "type": "string"
                     },
+                    "formula": {
+                      "maxLength": 10000,
+                      "type": "string"
+                    },
                     "id": {
                       "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
                       "type": "string"

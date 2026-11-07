@@ -5,6 +5,7 @@
  * error codes); this file turns them into text.
  */
 const EXPR_TYPE_NAMES: Readonly<Record<string, string>> = { bool: "true/false", number: "a number", string: "text" };
+const COLUMN_KIND_NAMES: Readonly<Record<string, string>> = { list: "list", stacks: "item amounts", curve: "curve" };
 
 export const en = {
   appName: "GameDevTool",
@@ -197,6 +198,16 @@ export const en = {
       "expr-arg-count": "Wrong number of function arguments",
       "expr-type": "Expression has the wrong type",
       "expr-unknown-option": "Unknown enum option in expression",
+      "expr-unknown-column": "Formula names a column that does not exist",
+      "expr-not-reference": "Formula uses \".\" after a column that is not a reference",
+      "expr-needs-column": "Formula uses a reference without naming a column of its row",
+      "expr-unsupported-column": "Formula reads a column type formulas cannot use",
+      "expr-cycle": "Formula depends on itself",
+      "expr-input-error": "Formula reads a column that has an error",
+      "formula-column-type": "Only Integer, Number, Text (plain) and Yes/No columns can have a formula",
+      "formula-role-column": "Built-in columns cannot have a formula",
+      "formula-stored-values": "Formula column has stored values; they are ignored",
+      "formula-cell-errors": "Formula fails for some rows",
     } as Record<string, string>,
   },
 
@@ -232,7 +243,7 @@ export const en = {
         case "expr-chained-comparison":
           return "Comparisons cannot be chained. Use and: a < b and b < c.";
         case "expr-unknown-name":
-          return `There is no variable named ${p.name}.`;
+          return p.table === undefined ? `There is no variable named ${p.name}.` : `${p.table} has no column named ${p.name}, and there is no variable named ${p.name}.`;
         case "expr-unknown-function":
           return `There is no function named ${p.name}.`;
         case "expr-arg-count":
@@ -249,6 +260,20 @@ export const en = {
           return "Division by zero.";
         case "expr-not-finite":
           return "The result is too large or not a number.";
+        case "expr-unknown-column":
+          return p.table === "" ? "The table this reference points to is missing." : `${p.table} has no column named ${p.name}.`;
+        case "expr-not-reference":
+          return `${p.name} is not a reference column, so "." cannot read a column through it.`;
+        case "expr-needs-column":
+          return `${p.name} points to a row${p.table === "" ? "" : ` of ${p.table}`}. Add .ColumnName to read one of its values.`;
+        case "expr-unsupported-column":
+          return `${p.name} is a ${COLUMN_KIND_NAMES[String(p.kind)] ?? p.kind} column. Formulas can read numbers, text, Yes/No and choices.`;
+        case "expr-cycle":
+          return `The formula depends on its own result (through ${p.column}).`;
+        case "expr-input-error":
+          return `${p.column} has an error, so this value cannot be computed.`;
+        case "expr-not-integer":
+          return "The result is not a whole number. Use round(), floor() or ceil(), or make the column a Number column.";
         default:
           return code;
       }
@@ -282,6 +307,9 @@ export const en = {
     "rename-column": "rename column",
     "remove-column": "delete column",
     "import-rows": "import CSV",
+    "add-formula": "add formula",
+    "edit-formula": "edit formula",
+    "remove-formula": "remove formula",
     "add-variable": "add variable",
     "remove-variable": "delete variable",
     "edit-variable": "edit variable",
@@ -461,7 +489,22 @@ export const en = {
     clipboardArea: "Clipboard",
     confirmDeleteRows: (n: number, used: number) =>
       `Delete ${n} ${n === 1 ? "row" : "rows"}?${used > 0 ? ` They are used in ${used} ${used === 1 ? "place" : "places"}, which will be left broken.` : ""} You can undo this.`,
-    gridHelp: "Arrows move, Shift+arrows select. Enter, F2 or typing edits; Ctrl+Enter writes the edit into every selected cell. Space toggles Yes/No. Delete clears, Ctrl+D fills down, Ctrl+C / Ctrl+X / Ctrl+V copy, cut and paste with spreadsheets.",
+    gridHelp: "Arrows move, Shift+arrows select. Enter, F2 or typing edits; Ctrl+Enter writes the edit into every selected cell. Space toggles Yes/No. Delete clears, Ctrl+D fills down, Ctrl+C / Ctrl+X / Ctrl+V copy, cut and paste with spreadsheets. Formula cells (ƒx) are computed: Enter edits the column formula.",
+    formula: "Formula",
+    formulaOf: (column: string) => `Formula of ${column}`,
+    formulaPlaceholder: "No formula. Type one to compute this column, e.g. Base * (1 + Level * 0.1)",
+    formulaNoColumn: "Select a cell of a column to see or set its formula.",
+    formulaNotAllowed: (kind: string) => `${kind} columns cannot have a formula. Formulas work on Integer, Number, Text (plain) and Yes/No columns.`,
+    formulaRoleColumn: "Built-in columns cannot have a formula: the production tools read their stored values.",
+    formulaHint: "Use this row's columns and project variables (start values); Reference.Column reads a column of the referenced row. Enter saves, Escape cancels. Clearing the formula keeps its values.",
+    formulaColumnError: (message: string) => `The formula does not work: ${message}`,
+    formulaCellError: (row: string, message: string) => `${row}: ${message}`,
+    formulaErrorCell: "#ERROR",
+    formulaBadge: "ƒx",
+    formulaBadgeTitle: (formula: string) => `Computed: ${formula}`,
+    confirmFormula: (column: string, n: number) => `Give ${column} a formula? Its ${n} stored ${n === 1 ? "value" : "values"} will be replaced by computed ones. You can undo this.`,
+    formulaRemoved: (column: string) => `Removed the formula of ${column}; its values were kept as plain values.`,
+    importedFormulas: (columns: string) => `Formula columns are computed and were not imported: ${columns}.`,
     pasted: (invalid: number, skipped: number) =>
       [
         invalid > 0 ? `${invalid} pasted ${invalid === 1 ? "value does" : "values do"} not fit ${invalid === 1 ? "its column" : "their columns"} and ${invalid === 1 ? "was" : "were"} left out.` : "",

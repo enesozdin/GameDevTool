@@ -3,7 +3,9 @@ import type { EnumOption, Id, LocalizableText } from "./primitives.ts";
 import type { Manifest, Project } from "./project.ts";
 import { buildReferenceIndex, type ReferenceIndex } from "./references.ts";
 import { replaceRange, rowDiff } from "./row-diff.ts";
-import { isTagStack, TAG_PATTERN, type CellValue, type Column, type ColumnType, type Row, type ScalarType, type TableAsset } from "./table.ts";
+import { isRoleColumn, isTagStack, TAG_PATTERN, type CellValue, type Column, type ColumnType, type Row, type ScalarType, type TableAsset } from "./table.ts";
+import { evaluateFormulas, hasFormula, type FormulaColumnResult, type FormulaResults } from "../formulas.ts";
+import type { Value } from "../expr/compile.ts";
 import { ULID_PATTERN } from "../ids.ts";
 import type { Asset } from "./project.ts";
 import { validateProductionGraph } from "../production/validate-graph.ts";
@@ -22,8 +24,16 @@ import { KEYWORDS, type ExprError } from "../expr/syntax.ts";
  *
  * At most MAX_ISSUES_PER_CODE issues of each code are listed (the first ones, in report
  * order); one ISSUES_TRUNCATED issue per capped code then says how many were left out.
+ *
+ * `formulas` are the computed formula columns of `project` (the editor keeps a
+ * FormulaEngine, which recalculates only what changed); without them they are computed here.
  */
-export function validateProject(project: Project, index: ReferenceIndex = buildReferenceIndex(project), cache: ValidationCache = createValidationCache()): Issue[] {
+export function validateProject(
+  project: Project,
+  index: ReferenceIndex = buildReferenceIndex(project),
+  cache: ValidationCache = createValidationCache(),
+  formulas: FormulaResults = evaluateFormulas(project),
+): Issue[] {
   const variables = project.manifest.variables;
   let conditions: ConditionCompiler | undefined;
   const conditionsFor = () => (conditions ??= new ConditionCompiler(variables));
@@ -99,6 +109,7 @@ export function validateProject(project: Project, index: ReferenceIndex = buildR
     }
   });
 
+  checkFormulaResults(project, formulas, cache, issues);
   checkDocumentCycles(project, issues);
 
   for (const ref of index.broken) {
@@ -227,6 +238,8 @@ export class ValidationCache {
   readonly assets = new WeakMap<object, AssetCheck>();
   /** Table checks by table id. */
   readonly tables = new Map<Id, TableCheck>();
+  /** Findings per formula column result (the formula engine keeps unchanged results). */
+  readonly formulas = new WeakMap<object, FormulaCheck>();
   readonly ids = new ClaimCounts();
   readonly locKeys = new ClaimCounts();
   /** Sources whose claims are in `ids` and `locKeys`, with how often they are counted. */
@@ -423,6 +436,11 @@ interface TableLayout {
   readonly unique: readonly number[];
   /** The column that may hold tag stacks ("any Fuel"): only recipe inputs. */
   readonly tagColumn: Id | undefined;
+  /**
+   * Columns with a formula: their cells are computed and checked in checkFormulaResults;
+   * values stored in them are leftovers (formula-stored-values) and are not checked.
+   */
+  readonly formulaColumns: ReadonlySet<Id>;
   /** Column id → index; undefined when two columns share an id (a duplicate-id error). */
   readonly columnIndex: ReadonlyMap<Id, number> | undefined;
 }
@@ -431,11 +449,14 @@ function tableLayout(table: TableAsset): TableLayout {
   const columnIds = new Set<Id>();
   const uniqueIds = new Set<Id>();
   const textColumns: Id[] = [];
+  const formulaColumns = new Set<Id>();
+  for (const column of table.columns) if (hasFormula(column)) formulaColumns.add(column.id);
   for (const column of table.columns) {
     columnIds.add(column.id);
     const t = column.type;
     if (t.kind === "text") textColumns.push(column.id);
-    if ((t.kind === "int" || t.kind === "string") && t.unique === true) uniqueIds.add(column.id);
+    // Computed values are checked for uniqueness in checkFormulaResults.
+    if ((t.kind === "int" || t.kind === "string") && t.unique === true && !formulaColumns.has(column.id)) uniqueIds.add(column.id);
   }
   // Uniqueness is tracked per column id: a column sharing its id with a unique one takes part.
   const unique: number[] = [];
@@ -450,6 +471,7 @@ function tableLayout(table: TableAsset): TableLayout {
     textColumns,
     unique,
     tagColumn: table.role?.kind === "recipes" ? table.role.inputs : undefined,
+    formulaColumns,
     columnIndex: columnIndex.size === table.columns.length ? columnIndex : undefined,
   };
 }
@@ -561,6 +583,8 @@ class TableCheck {
   private withFindings = 0;
   private names = new ClaimCounts();
   private unique = new Map<Id, ClaimCounts<string | number>>();
+  /** Per formula column id: rows that still store a value in it (formula-stored-values). */
+  private stored = new Map<Id, number>();
   private parts: Issue[][] = [];
   /**
    * Gate compile errors by row object. They depend on the gate text and the variables only;
@@ -616,6 +640,8 @@ class TableCheck {
     this.setPlan(table, assets, conditions);
     this.names = new ClaimCounts();
     this.unique = new Map();
+    this.stored = new Map();
+    for (const id of this.layout.formulaColumns) this.stored.set(id, 0);
     for (const c of this.layout.unique) {
       const id = table.columns[c]!.id;
       if (!this.unique.has(id)) this.unique.set(id, new ClaimCounts());
@@ -695,11 +721,17 @@ class TableCheck {
     return result;
   }
 
-  /** Adds (+1) or removes (-1) the row's name and unique values. */
+  /** Adds (+1) or removes (-1) the row's name, unique values and values stored in formula columns. */
   private count(row: Row, delta: 1 | -1): void {
     const key = row.name.toLowerCase();
     if (delta > 0) this.names.add(key);
     else this.names.remove(key);
+    if (this.stored.size > 0) {
+      for (const [id, n] of this.stored) {
+        const value = row.cells[id];
+        if (value !== undefined && value !== null) this.stored.set(id, n + delta);
+      }
+    }
     for (const c of this.layout.unique) {
       const id = this.layout.columns[c]!.id;
       const value = row.cells[id];
@@ -803,6 +835,12 @@ class TableCheck {
   report(issues: IssueCollector, ids: ClaimReplay, locKeys: ClaimReplay): void {
     const table = this.table!;
     this.header.replayInto(issues);
+    if (this.stored.size > 0) {
+      table.columns.forEach((column, c) => {
+        const count = this.layout.formulaColumns.has(column.id) ? this.stored.get(column.id)! : 0;
+        if (count > 0) issues.push({ severity: "warning", code: "formula-stored-values", path: [...this.at.base, "columns", c, "formula"], params: { count } });
+      });
+    }
     this.reportRows(table, issues);
     let rule = 0;
     for (const part of this.plan) {
@@ -902,6 +940,10 @@ function checkHeader(table: TableAsset, assetIndex: number, claimId: ClaimId, is
       issues.push({ severity: "error", code: "duplicate-name", path: [...base, "columns", c, "name"], params: { name: column.name } });
     }
     checkColumnType(column.type, [...base, "columns", c, "type"], claimId, issues);
+    if (column.formula === undefined) return;
+    const path: IssuePath = [...base, "columns", c, "formula"];
+    if (!hasFormula(column)) issues.push({ severity: "error", code: "formula-column-type", path, params: { kind: column.type.kind } });
+    else if (isRoleColumn(table, column.id)) issues.push({ severity: "error", code: "formula-role-column", path });
   });
 }
 
@@ -915,6 +957,7 @@ function checkRow(layout: TableLayout, row: Row, at: CellLocation, issues: Issue
     issues.push({ severity: "error", code: "duplicate-name", path: [...at.base, "rows", r, "name"], params: { name: row.name } });
   }
   layout.columns.forEach((column, c) => {
+    if (layout.formulaColumns.size > 0 && layout.formulaColumns.has(column.id)) return;
     const value = row.cells[column.id];
     at.column = column.id;
     at.tagsAllowed = column.id === layout.tagColumn;
@@ -1184,6 +1227,86 @@ function scalarPath(at: CellLocation, listIndex: number | undefined): IssuePath 
 
 function mismatch(path: IssuePath, expected: string): Issue {
   return { severity: "error", code: "type-mismatch", path, params: { expected } };
+}
+
+// ---------------------------------------------------------------------------------------
+// Formula columns: errors and column constraints on the computed values. One issue per
+// column and kind of problem (pointing at the first cell), since one bad input can fail
+// every row. Findings are cached per result object, which the engine keeps while the
+// column's inputs do not change.
+// ---------------------------------------------------------------------------------------
+
+interface FormulaCheck {
+  readonly assetIndex: number;
+  readonly columnIndex: number;
+  readonly issues: readonly Issue[];
+}
+
+function checkFormulaResults(project: Project, formulas: FormulaResults, cache: ValidationCache, issues: IssueSink): void {
+  if (formulas.columns.length === 0) return;
+  project.assets.forEach((asset, a) => {
+    if (asset.kind !== "table") return;
+    asset.columns.forEach((column, c) => {
+      if (!hasFormula(column)) return;
+      const result = formulas.get(asset.id, column.id);
+      if (result === undefined) return;
+      let check = cache.formulas.get(result);
+      if (check === undefined || check.assetIndex !== a || check.columnIndex !== c) {
+        check = { assetIndex: a, columnIndex: c, issues: formulaResultIssues(column, a, c, result) };
+        cache.formulas.set(result, check);
+      }
+      for (const issue of check.issues) issues.push(issue);
+    });
+  });
+}
+
+function formulaResultIssues(column: Column, a: number, c: number, result: FormulaColumnResult): Issue[] {
+  if (result.error !== undefined) return [exprIssue(["assets", a, "columns", c, "formula"], result.error)];
+  const out: Issue[] = [];
+  const cell = (r: number): IssuePath => ["assets", a, "rows", r, "cells", column.id];
+  if (result.cellErrors.size > 0) {
+    let first = Number.POSITIVE_INFINITY;
+    for (const r of result.cellErrors.keys()) if (r < first) first = r;
+    const error = result.cellErrors.get(first)!;
+    out.push({ severity: "error", code: "formula-cell-errors", path: cell(first), params: { count: result.cellErrors.size, error: error.code } });
+  }
+  const t = column.type;
+  const count = (code: string, bad: (v: Value) => boolean, params: Record<string, string | number> = {}) => {
+    let n = 0;
+    let first = -1;
+    for (let r = 0; r < result.length; r++) {
+      const v = result.value(r);
+      if (v !== undefined && bad(v)) {
+        if (n++ === 0) first = r;
+      }
+    }
+    if (n > 0) out.push({ severity: "error", code, path: cell(first), params: { ...params, count: n } });
+  };
+  if ((t.kind === "int" || t.kind === "float") && (t.min !== undefined || t.max !== undefined)) {
+    count("out-of-range", (v) => (t.min !== undefined && (v as number) < t.min) || (t.max !== undefined && (v as number) > t.max));
+  }
+  if (t.kind === "string" && t.maxLength !== undefined) {
+    const max = t.maxLength;
+    count("too-long", (v) => (v as string).length > max, { limit: max });
+  }
+  if ((t.kind === "int" || t.kind === "string") && t.unique === true) {
+    const seen = new Map<Value, number>();
+    let n = 0;
+    let at = -1;
+    let firstRow = -1;
+    for (let r = 0; r < result.length; r++) {
+      const v = result.value(r);
+      if (v === undefined) continue;
+      const prev = seen.get(v);
+      if (prev === undefined) seen.set(v, r);
+      else if (n++ === 0) {
+        at = r;
+        firstRow = prev;
+      }
+    }
+    if (n > 0) out.push({ severity: "error", code: "duplicate-value", path: cell(at), params: { firstRow, count: n } });
+  }
+  return out;
 }
 
 function checkDocumentCycles(project: Project, issues: IssueSink): void {
