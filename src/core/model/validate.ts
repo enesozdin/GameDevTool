@@ -52,15 +52,18 @@ export function validateProject(project: Project, index: ReferenceIndex = buildR
     if (asset.kind === "production-graph") {
       const recipes = assetsById.get(asset.recipes);
       const deps = [variables, assetsById.get(asset.items), recipes, ...(recipes?.kind === "table" ? referencedTables(recipes, assetsById) : [])];
-      const run: AssetRun = (claim, out) => {
+      const claims = (claim: ClaimId): void => {
         asset.nodes.forEach((node, i) => claim(node.id, () => ["assets", assetIndex, "nodes", i, "id"]));
         asset.edges.forEach((edge, i) => claim(edge.id, () => ["assets", assetIndex, "edges", i, "id"]));
         asset.groups?.forEach((group, i) => claim(group.id, () => ["assets", assetIndex, "groups", i, "id"]));
+      };
+      const run: AssetRun = (claim, out) => {
+        claims(claim);
         validateProductionGraph(project, asset, assetIndex, assetsById, out, conditionsFor());
       };
       const check = checkAsset(cache, asset, assetIndex, deps, run);
       use(check);
-      return { check, run };
+      return { check, claims };
     }
     return undefined;
   });
@@ -85,8 +88,9 @@ export function validateProject(project: Project, index: ReferenceIndex = buildR
     }
     for (const issue of check.check.issues) issues.push(issue);
     if (ids.active) {
+      let paths: ClaimPaths | undefined;
       check.check.ids.forEach((id, k) => {
-        if (ids.isDuplicate(id)) issues.push({ severity: "error", code: "duplicate-id", path: claimPath(check.run, k), params: { id } });
+        if (ids.isDuplicate(id)) issues.push({ severity: "error", code: "duplicate-id", path: (paths ??= claimPaths(check.claims))[k]!(), params: { id } });
       });
     }
   });
@@ -248,7 +252,8 @@ type AssetRun = (claim: ClaimId, out: Issue[]) => void;
 
 interface GraphCheck {
   readonly check: AssetCheck;
-  readonly run: AssetRun;
+  /** Claims the graph's ids, in the same order as `check.ids`. */
+  readonly claims: (claim: ClaimId) => void;
 }
 
 function sameDeps(a: readonly unknown[], b: readonly unknown[]): boolean {
@@ -272,14 +277,18 @@ function checkAsset(cache: ValidationCache, asset: Asset, assetIndex: number, de
   return check;
 }
 
-/** Path of the k-th id claim. Duplicates are rare, so this re-runs the checks. */
-function claimPath(run: AssetRun, k: number): IssuePath {
-  let path: IssuePath = [];
-  let n = 0;
-  run((_id, at) => {
-    if (n++ === k) path = at();
-  }, []);
-  return path;
+/** Path makers of every claim, by claim index. */
+type ClaimPaths = readonly (() => IssuePath)[];
+
+/**
+ * Collects the path of every claim in one pass, the first time a duplicate needs one.
+ * Re-running the claims once per duplicate would be quadratic: a crafted file with many
+ * duplicate ids could then freeze the tab.
+ */
+function claimPaths(claims: (claim: ClaimId) => void): ClaimPaths {
+  const paths: (() => IssuePath)[] = [];
+  claims((_id, at) => paths.push(at));
+  return paths;
 }
 
 /** Tables the columns of `table` point to (reference, stacks, list of reference). */
@@ -573,8 +582,11 @@ class TableCheck {
 
     const base = this.at.base;
     if (ids.active) {
+      let paths: ClaimPaths | undefined;
       this.headerIds.forEach((id, k) => {
-        if (ids.isDuplicate(id)) issues.push({ severity: "error", code: "duplicate-id", path: headerClaimPath(table, this.assetIndex, k), params: { id } });
+        if (!ids.isDuplicate(id)) return;
+        paths ??= claimPaths((claim) => checkHeader(table, this.assetIndex, claim, []));
+        issues.push({ severity: "error", code: "duplicate-id", path: paths[k]!(), params: { id } });
       });
       table.rows.forEach((row, r) => {
         if (ids.isDuplicate(row.id)) issues.push({ severity: "error", code: "duplicate-id", path: [...base, "rows", r, "id"], params: { id: row.id } });
@@ -649,15 +661,6 @@ function checkHeader(table: TableAsset, assetIndex: number, claimId: ClaimId, is
     }
     checkColumnType(column.type, [...base, "columns", c, "type"], claimId, issues);
   });
-}
-
-function headerClaimPath(table: TableAsset, assetIndex: number, k: number): IssuePath {
-  let path: IssuePath = [];
-  let n = 0;
-  checkHeader(table, assetIndex, (_id, at) => {
-    if (n++ === k) path = at();
-  }, []);
-  return path;
 }
 
 /**

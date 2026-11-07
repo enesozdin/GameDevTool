@@ -215,6 +215,46 @@ describe("incremental validation and reference index", () => {
   });
 });
 
+describe("duplicate ids in crafted files", () => {
+  // Paths of duplicates used to be found by re-running the checks once per duplicate, so a
+  // file with many duplicate ids took minutes to load. Now one pass collects all paths.
+  const N = 20_000;
+  const LIMIT_MS = 2_000;
+
+  it("reports duplicate enum option ids at each later option, in linear time", () => {
+    const newId = fixedIds(11);
+    const project = createEmptyProject("P", newId);
+    const same = newId();
+    const columns = Array.from({ length: N / 1_000 }, (_, c) => ({
+      id: newId(),
+      name: `C${c}`,
+      type: { kind: "enum" as const, options: Array.from({ length: 1_000 }, (_, i) => ({ id: same, name: `O${i}` })) },
+    }));
+    project.assets.push({ id: newId(), kind: "table", name: "T", columns, rows: [] });
+    const start = performance.now();
+    const duplicates = validateProject(project).filter((i) => i.code === "duplicate-id");
+    assert.ok(performance.now() - start < LIMIT_MS);
+    assert.equal(duplicates.length, N - 1);
+    assert.deepEqual(duplicates[0]!.path, ["assets", 0, "columns", 0, "type", "options", 1, "id"]);
+    assert.deepEqual(duplicates.at(-1)!.path, ["assets", 0, "columns", N / 1_000 - 1, "type", "options", 999, "id"]);
+  });
+
+  it("reports duplicate graph node ids at each later node, in linear time", () => {
+    const { project } = setup();
+    const graph = graphOf(project);
+    const node = graph.nodes[0]!;
+    const nodes = Array.from({ length: N }, (_, i) => ({ ...node, position: { x: i, y: 0 } }));
+    const crafted: Project = { ...project, assets: project.assets.map((a) => (a === graph ? { ...graph, nodes, edges: [] } : a)) };
+    const start = performance.now();
+    const duplicates = validateProject(crafted).filter((i) => i.code === "duplicate-id");
+    assert.ok(performance.now() - start < LIMIT_MS);
+    assert.equal(duplicates.length, N - 1);
+    const at = crafted.assets.indexOf(crafted.assets.find((a) => a.kind === "production-graph")!);
+    assert.deepEqual(duplicates[0]!.path, ["assets", at, "nodes", 1, "id"]);
+    assert.deepEqual(duplicates.at(-1)!.path, ["assets", at, "nodes", N - 1, "id"]);
+  });
+});
+
 describe("condition cache", () => {
   it("stays within its limit and keeps recently used conditions", () => {
     const compiler = new ConditionCompiler([{ id: fixedIds()(), name: "Level", type: "int", default: 0 }], 8);
