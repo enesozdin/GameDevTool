@@ -354,6 +354,22 @@ describe("table grid: fill, clear, Yes/No", () => {
     assert.deepEqual(rows.map((r) => r.cells[col.flying]), [true, true, true]);
     assert.equal(rows[0]!.cells[col.hp], 10);
   });
+
+  it("leaves Yes/No formula cells alone", () => {
+    const { project, stats: t, col } = sample();
+    const isTough = fixedIds(5)();
+    const withFormula: Project = {
+      ...project,
+      assets: project.assets.map((a) => (a.id === t.id ? { ...t, columns: [...t.columns, { id: isTough, name: "IsTough", type: { kind: "bool" as const }, formula: "Hp > 5" }] } : a)),
+    };
+    const table = stats(withFormula);
+    const res = setBoolRange(withFormula, table.id, all(table), true);
+    assert.ok(res.ok);
+    const rows = stats(apply(withFormula, res.value)).rows;
+    assert.deepEqual(rows.map((r) => r.cells[col.flying]), [true, true, true]);
+    assert.ok(rows.every((r) => r.cells[isTough] === undefined));
+    assert.ok(!validateProject(apply(withFormula, res.value)).some((i) => i.code === "formula-stored-values"));
+  });
 });
 
 describe("cell text", () => {

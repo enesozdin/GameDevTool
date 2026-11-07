@@ -284,9 +284,9 @@ export function clearRange(project: Project, tableId: Id, range: GridRange): Res
   return writeRange(project, tableId, range, "clear-cells", isTextEditable, () => undefined);
 }
 
-/** Sets every Yes/No cell of the range; other columns are left alone. */
+/** Sets every Yes/No cell of the range; other columns and formula cells are left alone. */
 export function setBoolRange(project: Project, tableId: Id, range: GridRange, value: boolean): Result<Change | null, GridWriteError> {
-  return writeRange(project, tableId, range, "edit-cells", (c) => c.type.kind === "bool", () => value);
+  return writeRange(project, tableId, range, "edit-cells", (c) => c.type.kind === "bool" && !hasFormula(c), () => value);
 }
 
 /**

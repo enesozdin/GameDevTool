@@ -161,6 +161,25 @@ describe("validation cache with formula columns", () => {
     }
     for (const code of ["formula-stored-values", "out-of-range", "duplicate-value"]) assert.ok(codes.has(code), code);
   });
+
+  it("warns about stored values only at the column that has the formula", () => {
+    // Two columns sharing an id (a duplicate-id error): only the formula column gets the warning.
+    const newId = fixedIds(78);
+    const project = createEmptyProject("P", newId);
+    const shared = newId();
+    project.assets.push({
+      id: newId(),
+      kind: "table",
+      name: "T",
+      columns: [
+        { id: shared, name: "Plain", type: { kind: "int" } },
+        { id: shared, name: "Calc", type: { kind: "int" }, formula: "1" },
+      ],
+      rows: [{ id: newId(), name: "R", cells: { [shared]: 5 } }],
+    });
+    const stored = validateProject(project).filter((i) => i.code === "formula-stored-values");
+    assert.deepEqual(stored.map((i) => i.path), [["assets", 0, "columns", 1, "formula"]]);
+  });
 });
 
 /** The "used by" count as the editor computed it before incomingCount: one usedBy per row. */

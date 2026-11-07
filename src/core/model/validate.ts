@@ -837,7 +837,8 @@ class TableCheck {
     this.header.replayInto(issues);
     if (this.stored.size > 0) {
       table.columns.forEach((column, c) => {
-        const count = this.layout.formulaColumns.has(column.id) ? this.stored.get(column.id)! : 0;
+        // Per column, not per id: a plain column sharing the id (a duplicate-id error) has no formula.
+        const count = hasFormula(column) ? this.stored.get(column.id)! : 0;
         if (count > 0) issues.push({ severity: "warning", code: "formula-stored-values", path: [...this.at.base, "columns", c, "formula"], params: { count } });
       });
     }
