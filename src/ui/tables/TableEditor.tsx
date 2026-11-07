@@ -53,19 +53,24 @@ export function TableEditor({ strings, project, table, newId, commit, saveFile, 
   const hasCells = table.rows.length > 0;
   const selectedRows = range.bottom - range.top + 1;
 
-  /** Deletes rows, asking first when other assets (recipes, graphs, references) use them or when several go. */
-  const deleteRows = (rows: readonly Row[]) => {
-    if (rows.length === 0) return;
+  /**
+   * Deletes rows, asking first when other assets (recipes, graphs, references) use them or
+   * when several go. Returns false when nothing was deleted (cancelled or no rows).
+   */
+  const deleteRows = (rows: readonly Row[]): boolean => {
+    if (rows.length === 0) return false;
     const index = buildReferenceIndex(project);
     let used = 0;
     for (const row of rows) used += index.usedBy(row.id).filter((r) => r.source !== table.id).length;
     const message = rows.length === 1 ? (used > 0 ? s.confirmDeleteRow(rows[0]!.name, used) : null) : s.confirmDeleteRows(rows.length, used);
-    if (message !== null && !window.confirm(message)) return;
+    if (message !== null && !window.confirm(message)) return false;
     commit(removeRows(project, table.id, new Set(rows.map((r) => r.id))));
+    return true;
   };
 
   const onDeleteSelectedRows = () => {
-    deleteRows(table.rows.slice(range.top, range.bottom + 1));
+    // Cancelled: the selection stays as it was.
+    if (!deleteRows(table.rows.slice(range.top, range.bottom + 1))) return;
     const p = { row: range.top, col: focus.col };
     setSelection({ anchor: p, focus: p });
   };

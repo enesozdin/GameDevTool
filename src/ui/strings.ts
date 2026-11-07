@@ -455,6 +455,7 @@ export const en = {
     fillDown: "Fill down",
     fillDownHint: "Copies the first selected row into the selected rows below it (Ctrl+D). With one row selected, copies the row above.",
     rowActions: "Row actions",
+    clipboardArea: "Clipboard",
     confirmDeleteRows: (n: number, used: number) =>
       `Delete ${n} ${n === 1 ? "row" : "rows"}?${used > 0 ? ` They are used in ${used} ${used === 1 ? "place" : "places"}, which will be left broken.` : ""} You can undo this.`,
     gridHelp: "Arrows move, Shift+arrows select. Enter, F2 or typing edits; Ctrl+Enter writes the edit into every selected cell. Space toggles Yes/No. Delete clears, Ctrl+D fills down, Ctrl+C / Ctrl+X / Ctrl+V copy, cut and paste with spreadsheets.",

@@ -98,8 +98,8 @@ export interface TableGridProps {
   readonly notify: (text: string, kind: "info" | "error") => void;
   readonly selection: GridSelection;
   readonly setSelection: Dispatch<SetStateAction<GridSelection>>;
-  /** Deletes a row after asking when other assets use it (shared with the toolbar). */
-  readonly deleteRows: (rows: readonly Row[]) => void;
+  /** Deletes rows after asking when needed (shared with the toolbar); false when cancelled. */
+  readonly deleteRows: (rows: readonly Row[]) => boolean;
 }
 
 /**
@@ -129,8 +129,13 @@ export function TableGrid({ strings, project, table, names, newId, commit, notif
   const editColumn = editing?.columnId == null ? null : table.columns.find((c) => c.id === editing.columnId);
   const editActive = editing !== null && editRow !== undefined && editColumn !== undefined;
   const editGridCol = !editActive ? -1 : editColumn === null ? 0 : table.columns.indexOf(editColumn) + 1;
+  // The edited row or column went away (undo, delete) and took the focused input with it:
+  // drop the edit and give focus back to the grid, so the keyboard keeps working.
   useEffect(() => {
-    if (editing !== null && !editActive) setEditing(null);
+    if (editing === null || editActive) return;
+    setEditing(null);
+    const active = document.activeElement;
+    if (active === null || active === document.body || scrollRef.current?.contains(active)) scrollRef.current?.focus({ preventScroll: true });
   }, [editing, editActive]);
 
   // ---- Virtualization. The active and the edited row are always rendered, so the
@@ -174,7 +179,9 @@ export function TableGrid({ strings, project, table, names, newId, commit, notif
     rowVirtualizer.scrollToIndex(p.row, { align: "auto" });
     if (p.col > 0) colVirtualizer.scrollToIndex(p.col - 1, { align: "auto" });
   };
-  // Moving the active cell brings it into view.
+  // Moving the active cell brings it into view. scrollToCell is left out of the
+  // dependencies on purpose: it is recreated every render, but only reads the two
+  // virtualizer instances, which are stable, and the position passed in.
   useEffect(() => scrollToCell(focus), [focus.row, focus.col, hasCells]);
 
   // ---- Actions ----------------------------------------------------------------------
@@ -253,14 +260,17 @@ export function TableGrid({ strings, project, table, names, newId, commit, notif
     if (e.target !== e.currentTarget) return;
     const ctrl = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
-    if (ctrl && !e.altKey && !e.shiftKey && (key === "c" || key === "x" || key === "v")) {
+    // Ctrl+Shift+V (paste as plain text) is a paste as well.
+    if (ctrl && !e.altKey && (((key === "c" || key === "x") && !e.shiftKey) || key === "v")) {
       // Not prevented: the browser's copy/paste runs in the text area. Paste also works on
       // an empty table.
       return routeClipboard();
     }
     if (!hasCells) return;
-    // AltGr (Ctrl+Alt on Windows) types characters such as @ and {, used by the stacks syntax.
-    const altGr = e.getModifierState("AltGraph");
+    // Characters typed with AltGr (Ctrl+Alt on Windows) or Option (macOS, which does not
+    // report AltGraph), such as @ and {, used by the stacks syntax. Alt with a plain letter
+    // or digit stays a browser shortcut (Windows menu keys).
+    const altChar = e.getModifierState("AltGraph") || (e.altKey && !ctrl && !/^[a-z0-9]$/i.test(e.key));
     const page = Math.max(1, Math.floor(e.currentTarget.clientHeight / ROW_HEIGHT) - 2);
     const go = (row: number, col: number) => {
       e.preventDefault();
@@ -308,7 +318,7 @@ export function TableGrid({ strings, project, table, names, newId, commit, notif
       e.preventDefault();
       return startEditing(null);
     }
-    if (e.key.length === 1 && ((!ctrl && !e.altKey) || altGr)) {
+    if (e.key.length === 1 && ((!ctrl && !e.altKey) || altChar)) {
       e.preventDefault();
       startEditing(e.key);
     }
@@ -429,7 +439,7 @@ export function TableGrid({ strings, project, table, names, newId, commit, notif
           ref={clipRef}
           className="tgrid-clip"
           tabIndex={-1}
-          aria-hidden="true"
+          aria-label={s.clipboardArea}
           onCopy={(e) => onCopy(e, false)}
           onCut={(e) => onCopy(e, true)}
           onPaste={onPaste}
