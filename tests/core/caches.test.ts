@@ -342,6 +342,45 @@ describe("issue cap with role rules", () => {
   });
 });
 
+describe("kept row findings", () => {
+  it("keeps the findings of heavy rows and moves their paths with the row", () => {
+    const newId = fixedIds(41);
+    const list = newId();
+    const level = newId();
+    // Heavy rows (1,100 list items, one bad) keep their findings; light rows keep counts.
+    const heavy = (k: number) => ({ id: newId(), name: `Heavy${k}`, cells: { [list]: Array.from({ length: 1_100 }, (_, i) => (i === k ? 500 : 1)) } });
+    const light = (k: number) => ({ id: newId(), name: `Light${k}`, cells: { [level]: -k - 1 } });
+    const table: TableAsset = {
+      id: newId(),
+      kind: "table",
+      name: "T",
+      columns: [
+        { id: list, name: "L", type: { kind: "list", item: { kind: "int", max: 100 } } },
+        { id: level, name: "Level", type: { kind: "int", min: 0 } },
+      ],
+      rows: [heavy(3), light(0), heavy(5), light(1)],
+    };
+    let p = createEmptyProject("P", newId);
+    p.assets.push(table);
+    const cache = createValidationCache();
+    const check = (): Issue[] => {
+      const issues = validateProject(p, undefined, cache);
+      assert.deepEqual(issues, validateProject(p));
+      return issues;
+    };
+    const paths = (issues: Issue[]) => issues.map((i) => i.path.join("/"));
+    assert.deepEqual(paths(check()), [`assets/0/rows/0/cells/${list}/3`, `assets/0/rows/1/cells/${level}`, `assets/0/rows/2/cells/${list}/5`, `assets/0/rows/3/cells/${level}`]);
+
+    // A row inserted at the top shifts every kept path by one.
+    p = apply(p, { label: "insert-row", patches: [{ op: "insert", path: ["assets", 0, "rows"], index: 0, value: heavy(9) }] });
+    assert.deepEqual(paths(check()), [`assets/0/rows/0/cells/${list}/9`, `assets/0/rows/1/cells/${list}/3`, `assets/0/rows/2/cells/${level}`, `assets/0/rows/3/cells/${list}/5`, `assets/0/rows/4/cells/${level}`]);
+
+    // The table moves in the asset list: the asset index in kept paths follows.
+    p = { ...p, assets: [{ id: newId(), kind: "document", name: "Doc", markdown: "" }, ...p.assets] };
+    assert.ok(paths(check()).every((path) => path.startsWith("assets/1/rows/")));
+  });
+});
+
 describe("condition cache", () => {
   it("stays within its limit and keeps recently used conditions", () => {
     const compiler = new ConditionCompiler([{ id: fixedIds()(), name: "Level", type: "int", default: 0 }], 8);

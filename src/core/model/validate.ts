@@ -8,7 +8,7 @@ import { ULID_PATTERN } from "../ids.ts";
 import type { Asset } from "./project.ts";
 import { validateProductionGraph } from "../production/validate-graph.ts";
 import { ConditionCompiler, exprIssue } from "../expr/conditions.ts";
-import { KEYWORDS } from "../expr/syntax.ts";
+import { KEYWORDS, type ExprError } from "../expr/syntax.ts";
 
 /**
  * Semantic checks that a structural schema cannot express: global id uniqueness,
@@ -454,7 +454,37 @@ function isText(value: CellValue | undefined): value is LocalizableText {
  * are made again from the row when they are reported, and only while their code is not
  * full, so the cache stays small however many findings a crafted file has.
  */
-type RowSummary = readonly number[];
+type RowSummary = readonly number[] | StoredFindings;
+
+/**
+ * A row whose findings are kept, because checking it again would cost much more than they
+ * take: per section, its issues with paths relative to the row (["cells", ...]).
+ */
+class StoredFindings {
+  readonly sections: readonly (readonly Issue[])[];
+  constructor(sections: readonly (readonly Issue[])[]) {
+    this.sections = sections;
+  }
+}
+
+/**
+ * A row's findings are kept when its weight (cells plus list items, stacks and curve keys)
+ * is at least this much per finding. Big rows with few findings are then never checked
+ * again when reported, and kept findings stay below 1/1,024 of the table's size.
+ */
+const STORE_WEIGHT_PER_FINDING = 1_024;
+
+/** About how much work checking a row costs. */
+function rowWeight(row: Row): number {
+  let weight = 0;
+  for (const key in row.cells) {
+    const value = row.cells[key];
+    weight++;
+    if (Array.isArray(value)) weight += value.length;
+    else if (value !== null && typeof value === "object" && "keys" in value) weight += value.keys.length;
+  }
+  return weight;
+}
 
 const findingKinds: { readonly severity: Issue["severity"]; readonly code: string }[] = [];
 const findingKindIds = new Map<string, number>();
@@ -502,7 +532,7 @@ class TableCheck {
   private withFindings = 0;
   private names = new ClaimCounts();
   private unique = new Map<Id, ClaimCounts<string | number>>();
-  private scratch: Issue[] = [];
+  private parts: Issue[][] = [];
   private summary: number[] = [];
   /** Scratch location for cell paths. */
   private at: CellLocation = { base: [], row: 0, column: "", tagsAllowed: false };
@@ -603,22 +633,31 @@ class TableCheck {
 
   /** Summary of the row's own findings, or null when it has none. */
   private check(row: Row, r: number): RowSummary | null {
-    const scratch = this.scratch;
+    // Scratch arrays, one per section, reused for every row: clean rows allocate nothing.
+    const parts = this.parts;
     const summary = this.summary;
     summary.length = 0;
-    scratch.length = 0;
     this.at.row = r;
-    checkRow(this.layout, row, this.at, scratch, undefined);
-    tally(summary, 0, scratch);
-    for (let k = 0; k < this.rules.length; k++) {
-      scratch.length = 0;
-      this.rules[k]!(row, r, scratch);
-      tally(summary, k + 1, scratch);
+    for (let k = 0; k <= this.rules.length; k++) {
+      const out = (parts[k] ??= []);
+      out.length = 0;
+      if (k === 0) checkRow(this.layout, row, this.at, out, undefined);
+      else this.rules[k - 1]!(row, r, out);
+      tally(summary, k, out);
     }
-    scratch.length = 0;
-    if (summary.length === 0) return null;
-    this.withFindings++;
-    return summary.slice();
+    let result: RowSummary | null = null;
+    if (summary.length > 0) {
+      this.withFindings++;
+      let found = 0;
+      for (let k = 0; k <= this.rules.length; k++) found += parts[k]!.length;
+      if (rowWeight(row) < found * STORE_WEIGHT_PER_FINDING) result = summary.slice();
+      else {
+        const relative = (issue: Issue): Issue => ({ ...issue, path: issue.path.slice(4) });
+        result = new StoredFindings(parts.slice(0, this.rules.length + 1).map((part) => part.map(relative)));
+      }
+    }
+    for (const part of parts) part.length = 0;
+    return result;
   }
 
   /** Adds (+1) or removes (-1) the row's name and unique values. */
@@ -656,6 +695,10 @@ class TableCheck {
   private reportSection(issues: IssueCollector, r: number, section: number, recheck: (row: Row) => void): void {
     const summary = this.rows[r]!;
     if (summary === null) return;
+    if (summary instanceof StoredFindings) {
+      for (const issue of summary.sections[section]!) issues.push({ ...issue, path: ["assets", this.assetIndex, "rows", r, ...issue.path] });
+      return;
+    }
     let listed = false;
     for (let i = 0; i < summary.length; i += 3) {
       if (summary[i] === section && issues.accepts(findingKinds[summary[i + 1]!]!.code)) {
@@ -868,11 +911,21 @@ function rolePlan(table: TableAsset, assetIndex: number, assets: ReadonlyMap<Id,
       checkTableRole("machine", check("machine", role.machine, (t) => t.kind === "reference"), "machines");
       const gate = check("gate", role.gate, isString);
       if (gate !== undefined) {
+        // Reported findings are made again from the row (RowSummary). Compiling a gate can
+        // cost a 10,000-character parse, and the compiler's cache holds 1,024 conditions, so
+        // the error is kept per row object: reporting never compiles a gate twice.
+        const failed = new WeakMap<Row, ExprError>();
         plan.push((row, r, out) => {
           const source = row.cells[gate.id];
           if (typeof source !== "string" || source.trim() === "") return;
-          const c = conditions.compile(source);
-          if (!c.ok) out.push(exprIssue(["assets", assetIndex, "rows", r, "cells", gate.id], c.error));
+          let error = failed.get(row);
+          if (error === undefined) {
+            const c = conditions.compile(source);
+            if (c.ok) return;
+            error = c.error;
+            failed.set(row, error);
+          }
+          out.push(exprIssue(["assets", assetIndex, "rows", r, "cells", gate.id], error));
         });
       }
       return plan;
