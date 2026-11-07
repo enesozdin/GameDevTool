@@ -18,10 +18,11 @@ One JSON document: `{ "manifest": { … }, "assets": [ … ] }`.
 - **Extension: `.json`**, so every OS and editor treats it as plain text. The content
   identifies a project (`manifest.format` is `"gamedevtool.project"`), never the name.
 - **Name:** the project name, made safe for every file system: characters Windows forbids
-  become `_`, and Windows device names get `_` after them (`CON` → `CON_.json`). Long names
-  are cut to 100 UTF-16 units and 200 UTF-8 bytes at a character boundary, so an emoji is
-  never split. It is never `gamedevtool.json` (that name gets a `-project` suffix), so a
-  downloaded project cannot pass for a folder manifest.
+  become `_`, and Windows device names (`CON`, `NUL`, `COM1`, `CONIN$`, …) get `_` after
+  them (`CON` → `CON_.json`). Long names are cut to 100 UTF-16 units and 200 UTF-8 bytes
+  at a character boundary, so an emoji is never split. It is never `gamedevtool.json`
+  (that name gets a `-project` suffix), so a downloaded project cannot pass for a folder
+  manifest.
 - **Legacy `.gdtproj`:** the extension used before 2026-11. Such files still open (the
   content is the same); saving one writes `.json`.
 - **Mix-ups are reported:** opening a folder's `gamedevtool.json` as a project file, or a

@@ -23,7 +23,7 @@ const MAX_STEM_BYTES = 200;
  * Device names Windows reserves. The part before the first dot counts, so "CON.json" and
  * "nul.backup.json" are reserved too.
  */
-const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3])$/i;
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|conin\$|conout\$|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3])$/i;
 
 /**
  * File name for saving a project, derived from its name: safe on Windows, macOS and Linux,

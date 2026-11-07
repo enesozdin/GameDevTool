@@ -106,6 +106,9 @@ describe("project file names", () => {
     assert.equal(projectFileName("Com1"), "Com1_.json");
     assert.equal(projectFileName("LPT9"), "LPT9_.json");
     assert.equal(projectFileName("COM\u00b9"), "COM\u00b9_.json");
+    assert.equal(projectFileName("CONIN$"), "CONIN$_.json");
+    assert.equal(projectFileName("conout$.log"), "conout$_.log.json");
+    assert.equal(savedFileName("CONOUT$.json"), "CONOUT$_.json");
     // The part before the first dot counts.
     assert.equal(projectFileName("aux.backup"), "aux_.backup.json");
     assert.equal(savedFileName("PRN.json"), "PRN_.json");
@@ -114,6 +117,8 @@ describe("project file names", () => {
     assert.equal(projectFileName("Console"), "Console.json");
     assert.equal(projectFileName("COM10"), "COM10.json");
     assert.equal(projectFileName("my nul"), "my nul.json");
+    assert.equal(projectFileName("CONIN"), "CONIN.json");
+    assert.equal(projectFileName("CONOUT$X"), "CONOUT$X.json");
   });
 
   it("cuts long names at a character boundary, never inside an emoji", () => {
