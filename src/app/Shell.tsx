@@ -504,6 +504,7 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
                   key={selected.id}
                   strings={strings}
                   project={project}
+                  index={index}
                   table={selected}
                   newId={newId}
                   commit={commitChange}

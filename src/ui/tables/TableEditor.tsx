@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import {
   addColumn,
   addRow,
-  buildReferenceIndex,
   CSV_FORMATS,
   exportTableCsv,
   fillDown,
@@ -15,6 +14,7 @@ import {
   type CsvFormatId,
   type IdGenerator,
   type Project,
+  type ReferenceIndex,
   type Row,
   type TableAsset,
 } from "../../core/index.ts";
@@ -28,6 +28,8 @@ export type PickedTextFile = { readonly name: string; readonly text: string } | 
 export interface TableEditorProps {
   readonly strings: UiStrings;
   readonly project: Project;
+  /** Reference index of `project`, kept by the app's cache: deleting rows builds none. */
+  readonly index: ReferenceIndex;
   readonly table: TableAsset;
   readonly newId: IdGenerator;
   readonly commit: (change: Change | null) => void;
@@ -43,7 +45,7 @@ export interface TableEditorProps {
  * (TableGrid.tsx). The toolbar works on the grid's selection, so touch users, who have no
  * keyboard shortcuts, can still delete rows and fill down.
  */
-export function TableEditor({ strings, project, table, newId, commit, saveFile, pickTextFile, notify }: TableEditorProps) {
+export function TableEditor({ strings, project, index, table, newId, commit, saveFile, pickTextFile, notify }: TableEditorProps) {
   const s = strings.tables;
   const [format, setFormat] = useState<CsvFormatId>("generic");
   const [spreadsheetSafe, setSpreadsheetSafe] = useState(false);
@@ -59,9 +61,8 @@ export function TableEditor({ strings, project, table, newId, commit, saveFile, 
    */
   const deleteRows = (rows: readonly Row[]): boolean => {
     if (rows.length === 0) return false;
-    const index = buildReferenceIndex(project);
     let used = 0;
-    for (const row of rows) used += index.usedBy(row.id).filter((r) => r.source !== table.id).length;
+    for (const row of rows) for (const ref of index.usedBy(row.id)) if (ref.source !== table.id) used++;
     const message = rows.length === 1 ? (used > 0 ? s.confirmDeleteRow(rows[0]!.name, used) : null) : s.confirmDeleteRows(rows.length, used);
     if (message !== null && !window.confirm(message)) return false;
     commit(removeRows(project, table.id, new Set(rows.map((r) => r.id))));
