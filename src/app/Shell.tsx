@@ -37,7 +37,7 @@ import { VirtualListbox } from "../ui/components/VirtualListbox.tsx";
 import { ProductionEditor } from "../ui/production/ProductionEditor.tsx";
 import { TableEditor } from "../ui/tables/TableEditor.tsx";
 import type { UiStrings } from "../ui/strings.ts";
-import { AssetPanel, incomingReferenceCount, ProjectPanel } from "./panels.tsx";
+import { AssetPanel, ProjectPanel } from "./panels.tsx";
 import { initialState, isDirty, reducer } from "./state.ts";
 import { defaultFileName, downloadProject, pickProjectFile, readProjectFile } from "./storage/project-file.ts";
 import { createFolderIo, ensureWritable, isFolderModeSupported, pickProjectFolder } from "./storage/project-folder.ts";
@@ -94,7 +94,8 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
   const validationCache = useMemo(createValidationCache, []);
   const issues = useMemo(() => validateProject(project, index, validationCache), [project, index, validationCache]);
   const selected = selectedId === null ? undefined : project.assets.find((a) => a.id === selectedId);
-  const referenceCount = useMemo(() => (selected ? incomingReferenceCount(index, selected) : 0), [index, selected]);
+  // Kept by the index cache: no pass over the rows of a selected table on each edit.
+  const referenceCount = useMemo(() => (selected ? index.incomingCount(selected) : 0), [index, selected]);
 
   const commitChange = useCallback((change: Change | null) => {
     if (change !== null) dispatch({ type: "commit", change, now: Date.now() });
@@ -265,7 +266,7 @@ export function Shell({ strings, version, newId, initialProject }: ShellProps) {
       setSelectedId(graph.id);
     },
     remove(asset: Asset) {
-      const refs = incomingReferenceCount(index, asset);
+      const refs = index.incomingCount(asset);
       const message = refs > 0 ? strings.confirm.deleteReferenced(asset.name, refs) : strings.confirm.deleteAsset(asset.name);
       if (!window.confirm(message)) return;
       commitChange(removeAsset(project, asset.id));

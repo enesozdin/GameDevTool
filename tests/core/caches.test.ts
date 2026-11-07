@@ -22,11 +22,13 @@ import {
   undo,
   updateNode,
   validateProject,
+  type Asset,
   type Change,
   type History,
   type Id,
   type ProductionGraphAsset,
   type Project,
+  type ReferenceIndex,
   type TableAsset,
 } from "../../src/core/index.ts";
 import { fixedIds, sampleProject } from "../helpers.ts";
@@ -93,6 +95,14 @@ describe("validation cache", () => {
   });
 });
 
+/** The "used by" count as the editor computed it before incomingCount: one usedBy per row. */
+function countRowByRow(index: ReferenceIndex, asset: Asset): number {
+  const incoming = (target: Id): number => index.usedBy(target).filter((r) => r.source !== asset.id).length;
+  let count = incoming(asset.id);
+  if (asset.kind === "table") for (const row of asset.rows) count += incoming(row.id);
+  return count;
+}
+
 describe("incremental validation and reference index", () => {
   /** Sample project plus the production sample, with a recipes-like table of 300 rows. */
   function bigProject(): { project: Project; big: TableAsset; items: TableAsset } {
@@ -125,6 +135,11 @@ describe("incremental validation and reference index", () => {
       assert.deepEqual(index.broken, fresh.broken);
       assert.deepEqual(index.references, fresh.references);
       for (const target of new Set(fresh.references.map((r) => r.target))) assert.deepEqual(index.usedBy(target), fresh.usedBy(target));
+      for (const asset of p.assets) {
+        const expected = countRowByRow(fresh, asset);
+        assert.equal(fresh.incomingCount(asset), expected, asset.name);
+        assert.equal(index.incomingCount(asset), expected, asset.name);
+      }
       const issues = validateProject(p, index, validationCache);
       assert.deepEqual(issues, validateProject(p));
       for (const issue of issues) codes.add(issue.code);
@@ -152,6 +167,25 @@ describe("incremental validation and reference index", () => {
     check(h.present);
     h = redo(h);
     check(h.present);
+    // References into the big table: from itself (not counted), from another table and
+    // from a production graph (a recipe node pointing at a big row: counted, though broken).
+    const bigCount = (): number => buildReferenceIndex(h.present, indexCache).incomingCount(h.present.assets[1]!);
+    const selfRef = fixedIds(555)();
+    const before = bigCount();
+    edit((p) => addColumn(p, big.id, { id: selfRef, name: "Next", type: { kind: "reference", table: big.id } }));
+    edit((p) => setCell(p, big.id, row(4), selfRef, row(5)));
+    assert.equal(bigCount(), before);
+    const itemRef = fixedIds(556)();
+    edit((p) => addColumn(p, items.id, { id: itemRef, name: "BestRecipe", type: { kind: "reference", table: big.id } }));
+    assert.equal(bigCount(), before + 1); // the column's reference to the table
+    edit((p) => setCell(p, items.id, items.rows[1]!.id, itemRef, row(5)));
+    assert.equal(bigCount(), before + 2);
+    const graphIndex = h.present.assets.findIndex((a) => a.kind === "production-graph");
+    const nodeIndex = graphOf(h.present).nodes.findIndex((n) => n.type === "recipe");
+    edit(() => ({ label: "node-recipe", patches: [{ op: "set", path: ["assets", graphIndex, "nodes", nodeIndex, "recipe"], value: row(6) }] }));
+    assert.equal(bigCount(), before + 3);
+    edit((p) => removeRows(p, big.id, new Set([row(5)]))); // the items cell and the self-reference lose their target
+    assert.equal(bigCount(), before + 2);
     edit((p) => replaceRows(p, big.id, (p.assets[1] as TableAsset).rows.slice().reverse())); // a sort: every row moves
     edit((p) => renameRow(p, big.id, row(3), "Renamed"));
     edit((p) => setCell(p, big.id, row(3), code!, 42)); // type mismatch
@@ -177,6 +211,7 @@ describe("incremental validation and reference index", () => {
     const fresh = buildReferenceIndex(project);
     assert.deepEqual(old.references, fresh.references);
     for (const target of new Set(fresh.references.map((r) => r.target))) assert.deepEqual(old.usedBy(target), fresh.usedBy(target));
+    for (const asset of project.assets) assert.equal(old.incomingCount(asset), countRowByRow(fresh, asset));
   });
 });
 

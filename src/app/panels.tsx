@@ -1,4 +1,4 @@
-import type { Asset, Change, Id, IdGenerator, Issue, Project, ReferenceIndex } from "../core/index.ts";
+import type { Asset, Change, Id, IdGenerator, Issue, Project } from "../core/index.ts";
 import { isValidName } from "../core/index.ts";
 import { NameField } from "../ui/components/NameField.tsx";
 import type { UiStrings } from "../ui/strings.ts";
@@ -6,19 +6,6 @@ import { VariablesPanel } from "../ui/variables/VariablesPanel.tsx";
 import type { SaveTarget } from "./state.ts";
 
 const MAX_LISTED_ISSUES = 100;
-
-/** References that would break if `asset` were deleted (its own internal ones excluded). */
-export function incomingReferenceCount(index: ReferenceIndex, asset: Asset): number {
-  // Runs after every edit while the asset is selected: count without allocating.
-  const incoming = (target: Id): number => {
-    let n = 0;
-    for (const ref of index.usedBy(target)) if (ref.source !== asset.id) n++;
-    return n;
-  };
-  let count = incoming(asset.id);
-  if (asset.kind === "table") for (const row of asset.rows) count += incoming(row.id);
-  return count;
-}
 
 export interface ProjectPanelProps {
   readonly strings: UiStrings;

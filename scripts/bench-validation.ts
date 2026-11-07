@@ -1,6 +1,7 @@
 /**
  * Measures validation and reference-index cost per edit on a large table, without caches
- * and the way the editor runs them after every edit (src/app/Shell.tsx, with caches).
+ * and the way the editor runs them after every edit (src/app/Shell.tsx, with caches), and
+ * the "used by" count of the selected big table, row by row and with incomingCount.
  *
  *   node scripts/bench-validation.ts [rows]
  */
@@ -80,20 +81,40 @@ const indexCache = createReferenceIndexCache();
 let current = project;
 validateProject(current, buildReferenceIndex(current, indexCache), validationCache);
 
+/** The "used by" count of a table as the editor computed it before: one usedBy lookup per row. */
+function countRowByRow(index: ReferenceIndex, table: TableAsset): number {
+  const incoming = (target: string): number => {
+    let n = 0;
+    for (const ref of index.usedBy(target)) if (ref.source !== table.id) n++;
+    return n;
+  };
+  let count = incoming(table.id);
+  for (const row of table.rows) count += incoming(row.id);
+  return count;
+}
+
 /** Median cost of `edit` for a full build and for the editor's cached path. */
 function measure(label: string, edit: (p: Project, e: number) => Change | null): void {
   const full: number[] = [];
   const index: number[] = [];
   const validate: number[] = [];
+  const rowByRow: number[] = [];
+  const counted: number[] = [];
   for (let e = 0; e < EDITS; e++) {
     current = apply(current, edit(current, e));
     full.push(time(() => validateProject(current, buildReferenceIndex(current))));
     let built: ReferenceIndex | undefined;
     index.push(time(() => (built = buildReferenceIndex(current, indexCache))));
     validate.push(time(() => validateProject(current, built!, validationCache)));
+    const table = current.assets[1] as TableAsset;
+    let a = 0;
+    let b = 0;
+    rowByRow.push(time(() => (a = countRowByRow(built!, table))));
+    counted.push(time(() => (b = built!.incomingCount(table))));
+    if (a !== b) throw new Error(`used-by count differs: ${a} vs ${b}`);
   }
   const total = median(index) + median(validate);
-  console.log(`${label.padEnd(24)} full ${median(full).toFixed(1).padStart(7)} | cached: index ${median(index).toFixed(2).padStart(6)} + validate ${median(validate).toFixed(2).padStart(6)} = ${total.toFixed(2).padStart(6)}`);
+  console.log(`${label.padEnd(24)} full ${median(full).toFixed(1).padStart(7)} | cached: index ${median(index).toFixed(2).padStart(6)} + validate ${median(validate).toFixed(2).padStart(6)} = ${total.toFixed(2).padStart(6)} | used-by count: row by row ${median(rowByRow).toFixed(2).padStart(6)}, incomingCount ${median(counted).toFixed(3)}`);
 }
 
 const bigRows = (p: Project) => (p.assets[1] as TableAsset).rows;

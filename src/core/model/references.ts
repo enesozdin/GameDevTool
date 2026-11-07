@@ -36,6 +36,13 @@ export interface ReferenceIndex {
   readonly broken: readonly Reference[];
   /** Everything that points at an asset or row ("used by" lists, safe delete/rename), in project order. */
   usedBy(target: Id): readonly Reference[];
+  /**
+   * References that would break if `asset` were deleted: those to the asset and, for a
+   * table, to each of its row ids, minus those the asset stores itself. Equals summing
+   * `usedBy` over the asset id and the row ids, but an index built with a cache answers it
+   * without visiting the rows. `asset` is expected to be from the indexed project.
+   */
+  incomingCount(asset: Asset): number;
 }
 
 const EMPTY: readonly Reference[] = [];
@@ -189,11 +196,25 @@ function buildFull(project: Project): ReferenceIndex {
     else byTarget.set(ref.target, [ref]);
   }
 
+  const usedBy = (target: Id): readonly Reference[] => byTarget.get(target) ?? EMPTY;
   return {
     references,
     broken,
-    usedBy: (target) => byTarget.get(target) ?? EMPTY,
+    usedBy,
+    incomingCount: (asset) => countRowByRow(usedBy, asset),
   };
+}
+
+/** incomingCount from usedBy: one lookup per row. */
+function countRowByRow(usedBy: (target: Id) => readonly Reference[], asset: Asset): number {
+  const incoming = (target: Id): number => {
+    let n = 0;
+    for (const ref of usedBy(target)) if (ref.source !== asset.id) n++;
+    return n;
+  };
+  let count = incoming(asset.id);
+  if (asset.kind === "table") for (const row of asset.rows) count += incoming(row.id);
+  return count;
 }
 
 
@@ -269,6 +290,11 @@ function materialize(entry: Entry): Reference {
   }
   if (entry instanceof ColumnRef) return columnReference(entry.column.unit.table.id, entry.column.unit.assetIndex, entry.column);
   return entry;
+}
+
+/** Id of the asset that stores the entry. */
+function sourceOf(entry: Entry): Id {
+  return entry instanceof CellRef || entry instanceof ColumnRef ? entry.column.unit.table.id : entry.source;
 }
 
 function assetIndexOf(entry: Entry): number {
@@ -399,6 +425,11 @@ class IndexState {
   /** Target id → entries pointing to it. One entry is stored without a Set. */
   private targets = new Map<Id, Entry | Set<Entry>>();
   private broken = new Set<Entry>();
+  /**
+   * Table id → number of entries whose target is one of its row ids (by `owners`) and
+   * whose source is another asset. Kept exact whenever entries or owners change.
+   */
+  private incoming = new Map<Id, number>();
   private tables = new Map<Id, TableUnit>();
   private statics = new WeakMap<Asset, StaticUnit>();
   private units: Unit[] = [];
@@ -450,12 +481,15 @@ class IndexState {
     // Row owners. Removals first, so a row moved between tables is no duplicate.
     const changedIds = new Set<Id>();
     const removeRow = (id: Id): void => {
+      const table = this.owners.get(id);
+      if (table !== undefined) this.countIncoming(id, table, -1);
       this.owners.delete(id);
       changedIds.add(id);
     };
     const addRow = (id: Id, table: Id): boolean => {
       if (this.owners.has(id)) return false;
       this.owners.set(id, table);
+      this.countIncoming(id, table, 1);
       changedIds.add(id);
       return true;
     };
@@ -522,7 +556,29 @@ class IndexState {
     return isBroken(entry, this.assets, this.owners);
   }
 
+  /** Adds `delta` to the incoming count of `table` for each entry from another asset to `rowId`. */
+  private countIncoming(rowId: Id, table: Id, delta: number): void {
+    let n = 0;
+    this.forTarget(rowId, (entry) => {
+      if (sourceOf(entry) !== table) n++;
+    });
+    if (n !== 0) this.addIncoming(table, n * delta);
+  }
+
+  private addIncoming(table: Id, delta: number): void {
+    const n = (this.incoming.get(table) ?? 0) + delta;
+    if (n === 0) this.incoming.delete(table);
+    else this.incoming.set(table, n);
+  }
+
+  /** Updates the incoming count for one entry added (1) or removed (-1). */
+  private countEntry(entry: Entry, delta: number): void {
+    const table = this.owners.get(entry.target);
+    if (table !== undefined && sourceOf(entry) !== table) this.addIncoming(table, delta);
+  }
+
   private add(entry: Entry): void {
+    this.countEntry(entry, 1);
     const set = this.targets.get(entry.target);
     if (set === undefined) this.targets.set(entry.target, entry);
     else if (set instanceof Set) set.add(entry);
@@ -531,6 +587,7 @@ class IndexState {
   }
 
   private remove(entry: Entry): void {
+    this.countEntry(entry, -1);
     const set = this.targets.get(entry.target);
     if (set === entry) this.targets.delete(entry.target);
     else if (set instanceof Set) {
@@ -568,6 +625,19 @@ class IndexState {
     const fallback = (): ReferenceIndex => (full ??= buildFull(project));
     const sorted = new Map<Id, readonly Reference[]>();
     let references: Reference[] | undefined;
+    const usedBy = (target: Id): readonly Reference[] => {
+      if (self.version !== version) return fallback().usedBy(target);
+      // Most rows are used by nothing: answered without allocating.
+      if (!self.targets.has(target)) return EMPTY;
+      let list = sorted.get(target);
+      if (list === undefined) {
+        const entries: Entry[] = [];
+        self.forTarget(target, (entry) => entries.push(entry));
+        list = entries.sort(compare).map(materialize);
+        sorted.set(target, list);
+      }
+      return list;
+    };
     return {
       broken,
       get references(): readonly Reference[] {
@@ -578,18 +648,17 @@ class IndexState {
         }
         return references;
       },
-      usedBy: (target) => {
-        if (self.version !== version) return fallback().usedBy(target);
-        // Most rows are used by nothing: answered without allocating.
-        if (!self.targets.has(target)) return EMPTY;
-        let list = sorted.get(target);
-        if (list === undefined) {
-          const entries: Entry[] = [];
-          self.forTarget(target, (entry) => entries.push(entry));
-          list = entries.sort(compare).map(materialize);
-          sorted.set(target, list);
-        }
-        return list;
+      usedBy,
+      incomingCount: (asset) => {
+        if (self.version !== version) return fallback().incomingCount(asset);
+        // Not the indexed asset (e.g. another version of it): counted by its rows.
+        if (self.assets.get(asset.id) !== asset) return countRowByRow(usedBy, asset);
+        let count = 0;
+        self.forTarget(asset.id, (entry) => {
+          if (sourceOf(entry) !== asset.id) count++;
+        });
+        if (asset.kind === "table") count += self.incoming.get(asset.id) ?? 0;
+        return count;
       },
     };
   }
