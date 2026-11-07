@@ -100,6 +100,48 @@ describe("project file names", () => {
     assert.equal(projectFileName("gamedevtool"), "gamedevtool-project.json");
   });
 
+  it("avoids device names Windows reserves", () => {
+    assert.equal(projectFileName("CON"), "CON_.json");
+    assert.equal(projectFileName("nul"), "nul_.json");
+    assert.equal(projectFileName("Com1"), "Com1_.json");
+    assert.equal(projectFileName("LPT9"), "LPT9_.json");
+    assert.equal(projectFileName("COM\u00b9"), "COM\u00b9_.json");
+    // The part before the first dot counts.
+    assert.equal(projectFileName("aux.backup"), "aux_.backup.json");
+    assert.equal(savedFileName("PRN.json"), "PRN_.json");
+    assert.equal(savedFileName("CON.gdtproj"), "CON_.json");
+    // Only exact device names: these are ordinary.
+    assert.equal(projectFileName("Console"), "Console.json");
+    assert.equal(projectFileName("COM10"), "COM10.json");
+    assert.equal(projectFileName("my nul"), "my nul.json");
+  });
+
+  it("cuts long names at a character boundary, never inside an emoji", () => {
+    const stem = (name: string) => projectFileName(name).slice(0, -".json".length);
+    // A surrogate pair straddling the 100-unit cut is dropped whole.
+    assert.equal(stem(`${"a".repeat(99)}\u{1F600}b`), "a".repeat(99));
+    // ZWJ sequence (family), flag and combining mark: kept whole or dropped whole.
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    assert.equal(stem(`${"a".repeat(95)}${family}`), "a".repeat(95));
+    assert.equal(stem(`${"a".repeat(92)}${family}`), `${"a".repeat(92)}${family}`);
+    const flag = "\u{1F1F9}\u{1F1F7}";
+    assert.equal(stem(`${"a".repeat(97)}${flag}x`), "a".repeat(97));
+    assert.equal(stem(`${"a".repeat(99)}e\u0301x`), "a".repeat(99));
+    // Every result is well-formed UTF-16.
+    for (const name of [`${"a".repeat(99)}\u{1F600}`, family.repeat(30), flag.repeat(60)]) {
+      assert.ok(projectFileName(name).isWellFormed(), name);
+    }
+  });
+
+  it("keeps names under the byte limits of ext4 and APFS", () => {
+    // 100 CJK characters are 100 UTF-16 units but 300 UTF-8 bytes: cut to 200 bytes.
+    const name = projectFileName("\u6f22".repeat(150));
+    assert.equal(name, `${"\u6f22".repeat(66)}.json`);
+    assert.ok(new TextEncoder().encode(name).length <= 255);
+    // A cut that ends on a space or dot is trimmed again (Windows drops them).
+    assert.equal(projectFileName(`${"a".repeat(99)} b`), `${"a".repeat(99)}.json`);
+  });
+
   it("saves a project opened from a legacy .gdtproj file as .json", () => {
     assert.equal(savedFileName("Old.gdtproj"), "Old.json");
     assert.equal(savedFileName("Old.GDTPROJ"), "Old.json");

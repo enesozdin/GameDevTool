@@ -77,6 +77,10 @@ Legend: ✅ verified working · ❌ verified not available · ⏳ not yet tested
   issues panel with 3,000 capped issues (badge, 100 listed, hidden count, capped note) and
   the row/table delete confirmations against the reference index, including after cell
   edits, undo and redo.
+  File names: "CON" downloads as `CON_.json`; a long name is cut at a character boundary
+  (an emoji straddling the cut is dropped whole) and stays under 255 UTF-8 bytes. Launch
+  Chromium with `LANG=C.UTF-8` when testing non-ASCII names: without a UTF-8 locale it
+  saves every non-ASCII download name (even "Café.json") as `download`.
 
 - **2026-11-05, Chromium (headless, Playwright outside the repo), file://:** check 13:
   example chain renders 6 nodes with rate labels, supply-driven mode marks MineIronOre as
