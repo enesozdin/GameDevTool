@@ -423,6 +423,8 @@ interface TableLayout {
   readonly unique: readonly number[];
   /** The column that may hold tag stacks ("any Fuel"): only recipe inputs. */
   readonly tagColumn: Id | undefined;
+  /** Column id → index; undefined when two columns share an id (a duplicate-id error). */
+  readonly columnIndex: ReadonlyMap<Id, number> | undefined;
 }
 
 function tableLayout(table: TableAsset): TableLayout {
@@ -440,7 +442,31 @@ function tableLayout(table: TableAsset): TableLayout {
   table.columns.forEach((column, c) => {
     if (uniqueIds.has(column.id)) unique.push(c);
   });
-  return { columns: table.columns, columnIds, textColumns, unique, tagColumn: table.role?.kind === "recipes" ? table.role.inputs : undefined };
+  const columnIndex = new Map<Id, number>();
+  table.columns.forEach((column, c) => columnIndex.set(column.id, c));
+  return {
+    columns: table.columns,
+    columnIds,
+    textColumns,
+    unique,
+    tagColumn: table.role?.kind === "recipes" ? table.role.inputs : undefined,
+    columnIndex: columnIndex.size === table.columns.length ? columnIndex : undefined,
+  };
+}
+
+const optionIdSets = new WeakMap<readonly EnumOption[], ReadonlySet<Id>>();
+
+/**
+ * Option ids of an enum type, built once per options list. A list of 10,000 enum values
+ * against 1,000 options would otherwise cost ten million comparisons per row.
+ */
+function optionIds(options: readonly EnumOption[]): ReadonlySet<Id> {
+  let ids = optionIdSets.get(options);
+  if (ids === undefined) {
+    ids = new Set(options.map((o) => o.id));
+    optionIdSets.set(options, ids);
+  }
+  return ids;
 }
 
 function isText(value: CellValue | undefined): value is LocalizableText {
@@ -469,10 +495,11 @@ class StoredFindings {
 
 /**
  * A row's findings are kept when its weight (cells plus list items, stacks and curve keys)
- * is at least this much per finding. Big rows with few findings are then never checked
- * again when reported, and kept findings stay below 1/1,024 of the table's size.
+ * is at least this much per finding. Kept findings stay below 1/128 of the table's size,
+ * and a row checked again when reported costs at most 128 values per finding: with at most
+ * 1,000 listed per code, a report re-checks at most about 128,000 values per code.
  */
-const STORE_WEIGHT_PER_FINDING = 1_024;
+const STORE_WEIGHT_PER_FINDING = 128;
 
 /** About how much work checking a row costs. */
 function rowWeight(row: Row): number {
@@ -512,6 +539,8 @@ interface RowDuplicates {
 type RolePart = Issue | RowRule;
 type RowRule = (row: Row, r: number, out: IssueSink) => void;
 
+const NO_ISSUES: readonly Issue[] = [];
+
 /**
  * Checks of one table, kept up to date across edits. Per row it stores the findings that
  * depend on that row only, and it counts names and unique values, so duplicates are found
@@ -533,6 +562,11 @@ class TableCheck {
   private names = new ClaimCounts();
   private unique = new Map<Id, ClaimCounts<string | number>>();
   private parts: Issue[][] = [];
+  /**
+   * Gate compile errors by row object. They depend on the gate text and the variables only;
+   * a change of variables or columns rebuilds the check, which starts a new map.
+   */
+  private gateErrors = new WeakMap<Row, ExprError>();
   private summary: number[] = [];
   /** Scratch location for cell paths. */
   private at: CellLocation = { base: [], row: 0, column: "", tagsAllowed: false };
@@ -574,6 +608,7 @@ class TableCheck {
     this.assetIndex = assetIndex;
     this.deps = deps;
     this.layout = tableLayout(table);
+    this.gateErrors = new WeakMap();
     this.at = { base: ["assets", assetIndex], row: 0, column: "", tagsAllowed: false };
     this.header = new IssueCollector();
     this.headerIds = [];
@@ -594,7 +629,7 @@ class TableCheck {
   }
 
   private setPlan(table: TableAsset, assets: ReadonlyMap<Id, Asset>, conditions: () => ConditionCompiler): void {
-    this.plan = table.role === undefined ? [] : rolePlan(table, this.assetIndex, assets, conditions());
+    this.plan = table.role === undefined ? [] : rolePlan(table, this.assetIndex, assets, conditions(), this.gateErrors);
     this.rules = this.plan.filter((part): part is RowRule => typeof part === "function");
   }
 
@@ -689,15 +724,15 @@ class TableCheck {
   }
 
   /**
-   * Reports one section of row r: made again from the row while one of its codes can still
-   * be listed, otherwise only counted.
+   * The issues of one section of row r, in order. Kept findings get the row's current
+   * position; otherwise the row is checked again, but only while one of the section's codes
+   * still has room. Returns undefined when none has: the findings were counted as left out.
    */
-  private reportSection(issues: IssueCollector, r: number, section: number, recheck: (row: Row) => void): void {
+  private sectionIssues(issues: IssueCollector, r: number, section: number, recheck: RowRule): readonly Issue[] | undefined {
     const summary = this.rows[r]!;
-    if (summary === null) return;
+    if (summary === null) return NO_ISSUES;
     if (summary instanceof StoredFindings) {
-      for (const issue of summary.sections[section]!) issues.push({ ...issue, path: ["assets", this.assetIndex, "rows", r, ...issue.path] });
-      return;
+      return summary.sections[section]!.map((issue) => ({ ...issue, path: ["assets", this.assetIndex, "rows", r, ...issue.path] }));
     }
     let listed = false;
     for (let i = 0; i < summary.length; i += 3) {
@@ -707,14 +742,62 @@ class TableCheck {
       }
     }
     if (listed) {
-      recheck(this.table!.rows[r]!);
-      return;
+      const out: Issue[] = [];
+      recheck(this.table!.rows[r]!, r, out);
+      return out;
     }
     for (let i = 0; i < summary.length; i += 3) {
       if (summary[i] !== section) continue;
       const kind = findingKinds[summary[i + 1]!]!;
       issues.omit(kind.severity, kind.code, summary[i + 2]!);
     }
+    return undefined;
+  }
+
+  private reportSection(issues: IssueCollector, r: number, section: number, recheck: RowRule): void {
+    const found = this.sectionIssues(issues, r, section, recheck);
+    if (found !== undefined) for (const issue of found) issues.push(issue);
+  }
+
+  /** Re-checks a row's cells (section 0). */
+  private readonly recheckCells: RowRule = (row, r, out) => {
+    this.at.row = r;
+    checkRow(this.layout, row, this.at, out, undefined);
+  };
+
+  /**
+   * A row with a duplicate name or value: the duplicate findings go around its cached cell
+   * findings in checkRow's order (name first, each value after its cell's findings), so the
+   * row is not checked again just for them.
+   */
+  private reportDuplicateRow(issues: IssueCollector, r: number, row: Row, duplicates: RowDuplicates): void {
+    const columnIndex = this.layout.columnIndex;
+    if (columnIndex === undefined) {
+      // Columns sharing an id cannot be told apart by path: check the row again.
+      this.at.row = r;
+      checkRow(this.layout, row, this.at, issues, duplicates);
+      return;
+    }
+    const base = this.at.base;
+    if (duplicates.name) issues.push({ severity: "error", code: "duplicate-name", path: [...base, "rows", r, "name"], params: { name: row.name } });
+    const values = duplicates.cells === undefined ? [] : [...duplicates.cells.keys()].sort((a, b) => a - b);
+    let next = 0;
+    const valuesBefore = (column: number): void => {
+      for (; next < values.length && values[next]! < column; next++) {
+        const c = values[next]!;
+        issues.push({ severity: "error", code: "duplicate-value", path: [...base, "rows", r, "cells", this.layout.columns[c]!.id], params: { firstRow: duplicates.cells!.get(c)! } });
+      }
+    };
+    const found = this.sectionIssues(issues, r, 0, this.recheckCells);
+    // Left out (undefined): only the duplicate findings can be listed, in column order.
+    if (found !== undefined) {
+      for (const issue of found) {
+        // Cell findings are ["assets", a, "rows", r, "cells", columnId, ...]; unknown columns come last.
+        valuesBefore(columnIndex.get(issue.path[5] as Id) ?? Infinity);
+        issues.push(issue);
+      }
+    }
+    valuesBefore(Infinity);
   }
 
   report(issues: IssueCollector, ids: ClaimReplay, locKeys: ClaimReplay): void {
@@ -729,9 +812,7 @@ class TableCheck {
       }
       const k = rule++;
       if (this.withFindings === 0) continue;
-      for (let r = 0; r < this.rows.length; r++) {
-        if (this.rows[r] !== null) this.reportSection(issues, r, k + 1, (row) => part(row, r, issues));
-      }
+      for (let r = 0; r < this.rows.length; r++) if (this.rows[r] !== null) this.reportSection(issues, r, k + 1, part);
     }
 
     const base = this.at.base;
@@ -762,17 +843,13 @@ class TableCheck {
 
   /** Row findings in row order. Rows with a duplicate name or value are checked again. */
   private reportRows(table: TableAsset, issues: IssueCollector): void {
-    const recheck = (r: number) => (row: Row) => {
-      this.at.row = r;
-      checkRow(this.layout, row, this.at, issues, undefined);
-    };
     const names = this.names.duplicates;
     const unique = this.layout.unique
       .map((c) => ({ c, id: table.columns[c]!.id }))
       .filter(({ id }) => this.unique.get(id)!.duplicates.size > 0);
     if (names.size === 0 && unique.length === 0) {
       if (this.withFindings === 0) return;
-      for (let r = 0; r < this.rows.length; r++) if (this.rows[r] !== null) this.reportSection(issues, r, 0, recheck(r));
+      for (let r = 0; r < this.rows.length; r++) if (this.rows[r] !== null) this.reportSection(issues, r, 0, this.recheckCells);
       return;
     }
 
@@ -797,12 +874,8 @@ class TableCheck {
         if (firstRow === undefined) seen.set(value, r);
         else (cells ??= new Map()).set(c, firstRow);
       }
-      if (name || cells !== undefined) {
-        this.at.row = r;
-        checkRow(this.layout, row, this.at, issues, { name, cells });
-      } else if (this.rows[r] !== null) {
-        this.reportSection(issues, r, 0, recheck(r));
-      }
+      if (name || cells !== undefined) this.reportDuplicateRow(issues, r, row, { name, cells });
+      else if (this.rows[r] !== null) this.reportSection(issues, r, 0, this.recheckCells);
     });
   }
 }
@@ -869,7 +942,7 @@ const isString: ColumnCheck = (t) => t.kind === "string";
 const isStringList: ColumnCheck = (t) => t.kind === "list" && t.item.kind === "string";
 
 /** Role checks in report order. Per-row checks are rules, run per row by TableCheck. */
-function rolePlan(table: TableAsset, assetIndex: number, assets: ReadonlyMap<Id, Asset>, conditions: ConditionCompiler): RolePart[] {
+function rolePlan(table: TableAsset, assetIndex: number, assets: ReadonlyMap<Id, Asset>, conditions: ConditionCompiler, gateErrors: WeakMap<Row, ExprError>): RolePart[] {
   const role = table.role!;
   const plan: RolePart[] = [];
   const columns = new Map<Id, Column>();
@@ -913,8 +986,9 @@ function rolePlan(table: TableAsset, assetIndex: number, assets: ReadonlyMap<Id,
       if (gate !== undefined) {
         // Reported findings are made again from the row (RowSummary). Compiling a gate can
         // cost a 10,000-character parse, and the compiler's cache holds 1,024 conditions, so
-        // the error is kept per row object: reporting never compiles a gate twice.
-        const failed = new WeakMap<Row, ExprError>();
+        // the error is kept per row object (TableCheck.gateErrors): reporting never compiles
+        // a gate twice, also after the table moved in the asset list.
+        const failed = gateErrors;
         plan.push((row, r, out) => {
           const source = row.cells[gate.id];
           if (typeof source !== "string" || source.trim() === "") return;
@@ -1095,7 +1169,7 @@ function checkScalar(type: ScalarType, value: Exclude<CellValue, null>, at: Cell
       return;
     case "enum":
       if (typeof value !== "string") issues.push(mismatch(scalarPath(at, listIndex), type.kind));
-      else if (!type.options.some((o) => o.id === value)) issues.push({ severity: "error", code: "unknown-option", path: scalarPath(at, listIndex), params: { value } });
+      else if (!optionIds(type.options).has(value)) issues.push({ severity: "error", code: "unknown-option", path: scalarPath(at, listIndex), params: { value } });
       return;
     case "reference":
       // Whether the row exists is checked by the reference index.

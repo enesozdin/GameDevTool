@@ -381,6 +381,66 @@ describe("kept row findings", () => {
   });
 });
 
+describe("duplicate rows around cached findings", () => {
+  it("puts the duplicate name first and each duplicate value after its cell's findings", () => {
+    const newId = fixedIds(51);
+    const [a, u, b, list] = [newId(), newId(), newId(), newId()];
+    const stray = newId();
+    // A heavy list keeps the row's findings (StoredFindings); a light row keeps counts.
+    const heavy = Array.from({ length: 600 }, () => 1);
+    const row = (name: string, cells: TableAsset["rows"][number]["cells"]) => ({ id: newId(), name, cells });
+    const table: TableAsset = {
+      id: newId(),
+      kind: "table",
+      name: "T",
+      columns: [
+        { id: a, name: "A", type: { kind: "int", max: 0 } },
+        { id: u, name: "U", type: { kind: "string", unique: true } },
+        { id: b, name: "B", type: { kind: "bool" } },
+        { id: list, name: "L", type: { kind: "list", item: { kind: "int" } } },
+      ],
+      rows: [
+        row("Same", { [u]: "dup" }),
+        row("same", { [a]: 5, [u]: "dup", [b]: "no", [stray]: 1 }),
+        row("SAME", { [a]: 5, [u]: "dup", [b]: "no", [list]: heavy, [stray]: 1 }),
+      ],
+    };
+    let p = createEmptyProject("P", newId);
+    p.assets.push(table);
+    const cache = createValidationCache();
+    const order = (issues: Issue[]) => issues.map((i) => `${i.path[3]}:${i.code}`);
+    const expected = (first: number) =>
+      [1, 2].flatMap((r) => [`${r}:duplicate-name`, `${r}:out-of-range`, `${r}:duplicate-value`, `${r}:type-mismatch`, `${r}:unknown-column`]).map((x) => x.replace(/^\d+/, (r) => String(Number(r) + first)));
+    let issues = validateProject(p, undefined, cache);
+    assert.deepEqual(issues, validateProject(p));
+    assert.deepEqual(order(issues), expected(0));
+    assert.deepEqual(issues.find((i) => i.code === "duplicate-value")?.params, { firstRow: 0 });
+
+    // A row inserted on top: cached findings move, duplicates still interleave.
+    p = apply(p, { label: "insert-row", patches: [{ op: "insert", path: ["assets", 0, "rows"], index: 0, value: row("Other", {}) }] });
+    issues = validateProject(p, undefined, cache);
+    assert.deepEqual(issues, validateProject(p));
+    assert.deepEqual(order(issues), expected(1));
+  });
+});
+
+describe("gate errors after a table move", () => {
+  it("are kept when the recipes table moves in the asset list", () => {
+    const { project } = setup();
+    const recipes = project.assets.find((a): a is TableAsset => a.kind === "table" && a.role?.kind === "recipes")!;
+    const gate = recipes.role?.kind === "recipes" ? recipes.role.gate : undefined;
+    assert.ok(gate !== undefined);
+    let p = apply(project, setCell(project, recipes.id, recipes.rows[0]!.id, gate, "Level >"));
+    const cache = createValidationCache();
+    const first = validateProject(p, undefined, cache).filter((i) => i.code.startsWith("expr-"));
+    assert.equal(first.length, 1);
+    p = { ...p, assets: [...p.assets.slice(1), p.assets[0]!] };
+    const moved = validateProject(p, undefined, cache);
+    assert.deepEqual(moved, validateProject(p));
+    assert.deepEqual(moved.filter((i) => i.code.startsWith("expr-")).map((i) => i.path[1]), [p.assets.indexOf(p.assets.find((a) => a.id === recipes.id)!)]);
+  });
+});
+
 describe("condition cache", () => {
   it("stays within its limit and keeps recently used conditions", () => {
     const compiler = new ConditionCompiler([{ id: fixedIds()(), name: "Level", type: "int", default: 0 }], 8);
