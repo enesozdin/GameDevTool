@@ -106,6 +106,12 @@ describe("project file names", () => {
     assert.equal(savedFileName("Game.json"), "Game.json");
     assert.equal(savedFileName(".gdtproj"), ".gdtproj");
   });
+
+  it("never saves an opened project under the folder manifest's name", () => {
+    // The old default name of a project called "GameDevTool".
+    assert.equal(savedFileName("GameDevTool.gdtproj"), "GameDevTool-project.json");
+    assert.equal(savedFileName("gamedevtool.json"), "gamedevtool-project.json");
+  });
 });
 
 describe("semantic validation", () => {

@@ -301,7 +301,7 @@ export const en = {
     "forbidden-key": "The file contains a forbidden key and was not opened.",
     "not-a-project": "This is not a GameDevTool project file.",
     "folder-manifest": "This is the manifest of a project folder, not a single project file. Open the whole folder instead (Open folder…).",
-    "single-file-project": "gamedevtool.json in this folder is a single project file, not a folder manifest. Open it with Open… instead, or rename it.",
+    "single-file-project": "This is a single project file, not a project folder's manifest. Open it with Open… instead, or rename it.",
     "unsupported-version": "This project was saved by a newer version of GameDevTool.",
     "missing-migration": "This project's schema version cannot be upgraded.",
     "migration-failed": "Upgrading this project failed.",
