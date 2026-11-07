@@ -316,6 +316,32 @@ describe("issue cap", () => {
   });
 });
 
+describe("issue cap with role rules", () => {
+  it("caps per-row role findings (item tags) the same with and without a cache", () => {
+    const { project } = setup();
+    const items = project.assets.find((a): a is TableAsset => a.kind === "table" && a.role?.kind === "items")!;
+    const tags = items.role?.kind === "items" ? items.role.tags! : "";
+    const newId = fixedIds(31);
+    const rows = Array.from({ length: 1_200 }, (_, i) => ({ id: newId(), name: `Bad${i}`, cells: { [tags]: ["bad tag", "also bad"] } }));
+    let p = apply(project, replaceRows(project, items.id, [...items.rows, ...rows]));
+    const cache = createValidationCache();
+    const check = (): Issue[] => {
+      const issues = validateProject(p, undefined, cache);
+      assert.deepEqual(issues, validateProject(p));
+      return issues;
+    };
+    let issues = check();
+    assert.equal(issues.filter((i) => i.code === "tag-invalid").length, MAX_ISSUES_PER_CODE);
+    assert.deepEqual(issues.find((i) => i.code === ISSUES_TRUNCATED)?.params, { code: "tag-invalid", omitted: 2 * 1_200 - MAX_ISSUES_PER_CODE });
+    // Fixing rows at the start brings later ones into the list; their paths are made fresh.
+    for (let r = 0; r < 300; r++) p = apply(p, setCell(p, items.id, rows[r]!.id, tags, ["Fine"]));
+    issues = check();
+    const first = issues.find((i) => i.code === "tag-invalid")!;
+    assert.deepEqual(first.path, ["assets", project.assets.indexOf(items), "rows", items.rows.length + 300, "cells", tags, 0]);
+    assert.deepEqual(issues.find((i) => i.code === ISSUES_TRUNCATED)?.params, { code: "tag-invalid", omitted: 2 * 900 - MAX_ISSUES_PER_CODE });
+  });
+});
+
 describe("condition cache", () => {
   it("stays within its limit and keeps recently used conditions", () => {
     const compiler = new ConditionCompiler([{ id: fixedIds()(), name: "Level", type: "int", default: 0 }], 8);

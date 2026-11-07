@@ -89,7 +89,7 @@ export function validateProject(project: Project, index: ReferenceIndex = buildR
       check.report(issues, ids, locKeys);
       return;
     }
-    for (const issue of check.check.issues) issues.push(issue);
+    check.check.issues.replayInto(issues);
     if (ids.active) {
       let paths: ClaimPaths | undefined;
       check.check.ids.forEach((id, k) => {
@@ -119,7 +119,7 @@ export const MAX_ISSUES_PER_CODE = 1_000;
  */
 export const ISSUES_TRUNCATED = "issues-truncated";
 
-/** Where checks add issues: an array, or the capped project list. */
+/** Where checks add issues: an array, or a capped list. */
 interface IssueSink {
   push(issue: Issue): unknown;
 }
@@ -129,7 +129,7 @@ interface IssueSink {
  * listed ones are the first of each code: the same with or without a cache.
  */
 class IssueCollector implements IssueSink {
-  private readonly list: Issue[] = [];
+  private list: Issue[] = [];
   private readonly counts = new Map<string, number>();
   private readonly omitted = new Map<string, { readonly severity: Issue["severity"]; count: number }>();
 
@@ -138,19 +138,43 @@ class IssueCollector implements IssueSink {
     if (n < MAX_ISSUES_PER_CODE) {
       this.counts.set(issue.code, n + 1);
       this.list.push(issue);
-    } else this.omit(issue.severity, issue.code);
+    } else this.omit(issue.severity, issue.code, 1);
+  }
+
+  /** Whether an issue with this code would still be listed. */
+  accepts(code: string): boolean {
+    return (this.counts.get(code) ?? 0) < MAX_ISSUES_PER_CODE;
   }
 
   /** Like push, but builds the issue (and its path) only when it is listed. */
   lazy(severity: Issue["severity"], code: string, make: () => Issue): void {
-    if ((this.counts.get(code) ?? 0) < MAX_ISSUES_PER_CODE) this.push(make());
-    else this.omit(severity, code);
+    if (this.accepts(code)) this.push(make());
+    else this.omit(severity, code, 1);
   }
 
-  private omit(severity: Issue["severity"], code: string): void {
+  /** Counts `count` issues that are not listed (the code is full). */
+  omit(severity: Issue["severity"], code: string, count: number): void {
     const omitted = this.omitted.get(code);
-    if (omitted !== undefined) omitted.count++;
-    else this.omitted.set(code, { severity, count: 1 });
+    if (omitted !== undefined) omitted.count += count;
+    else this.omitted.set(code, { severity, count });
+  }
+
+  /**
+   * Adds this list to `target` as if its issues were pushed one by one. Exact because a
+   * code's left-out issues come after its first MAX_ISSUES_PER_CODE, which fill `target`.
+   */
+  replayInto(target: IssueCollector): void {
+    for (const issue of this.list) target.push(issue);
+    for (const [code, { severity, count }] of this.omitted) target.omit(severity, code, count);
+  }
+
+  /** A copy with every listed issue passed through `fn`. */
+  mapped(fn: (issue: Issue) => Issue): IssueCollector {
+    const copy = new IssueCollector();
+    copy.list = this.list.map(fn);
+    for (const [code, n] of this.counts) copy.counts.set(code, n);
+    for (const [code, o] of this.omitted) copy.omitted.set(code, { ...o });
+    return copy;
   }
 
   /** The list, with one ISSUES_TRUNCATED issue per capped code at the end. */
@@ -304,7 +328,8 @@ function forEachClaim(source: ClaimSource, onId: (id: Id) => void, onLocKey: (ke
 export interface AssetCheck extends ClaimList {
   readonly deps: readonly unknown[];
   readonly assetIndex: number;
-  readonly issues: readonly Issue[];
+  /** Capped like the project list: a crafted graph cannot make the cache large. */
+  readonly issues: IssueCollector;
 }
 
 type AssetRun = (claim: ClaimId, out: Issue[]) => void;
@@ -324,13 +349,15 @@ function checkAsset(cache: ValidationCache, asset: Asset, assetIndex: number, de
   if (cached !== undefined && sameDeps(cached.deps, deps)) {
     if (cached.assetIndex === assetIndex) return cached;
     // The asset moved in the list: same findings, new paths.
-    const moved: AssetCheck = { ...cached, assetIndex, issues: cached.issues.map((issue) => (issue.path[0] === "assets" ? { ...issue, path: ["assets", assetIndex, ...issue.path.slice(2)] } : issue)) };
+    const moved: AssetCheck = { ...cached, assetIndex, issues: cached.issues.mapped((issue) => (issue.path[0] === "assets" ? { ...issue, path: ["assets", assetIndex, ...issue.path.slice(2)] } : issue)) };
     cache.assets.set(asset, moved);
     return moved;
   }
   const ids: Id[] = [];
-  const issues: Issue[] = [];
-  run((id) => ids.push(id), issues);
+  const found: Issue[] = [];
+  run((id) => ids.push(id), found);
+  const issues = new IssueCollector();
+  for (const issue of found) issues.push(issue);
   const check: AssetCheck = { deps, assetIndex, issues, ids, locKeys: [] };
   cache.assets.set(asset, check);
   return check;
@@ -420,14 +447,28 @@ function isText(value: CellValue | undefined): value is LocalizableText {
   return value !== undefined && value !== null && typeof value === "object" && !Array.isArray(value) && "source" in value;
 }
 
-/** Findings of one row that do not depend on other rows, at the row index they were made for. */
-interface RowFindings {
-  assetIndex: number;
-  row: number;
-  /** Cell, required and unknown-column findings. */
-  cells: readonly Issue[];
-  /** Findings of each role rule (RolePart functions, in plan order). */
-  role: readonly (readonly Issue[])[];
+/**
+ * What one row found, without the issues themselves: triples of [section, kind, count] in
+ * report order. Section 0 holds the cell, required and unknown-column findings, section
+ * k + 1 those of role rule k; kind numbers a (severity, code) pair (findingKind). Issues
+ * are made again from the row when they are reported, and only while their code is not
+ * full, so the cache stays small however many findings a crafted file has.
+ */
+type RowSummary = readonly number[];
+
+const findingKinds: { readonly severity: Issue["severity"]; readonly code: string }[] = [];
+const findingKindIds = new Map<string, number>();
+
+/** Number of the issue's (severity, code) pair. Codes are a fixed set, so this stays small. */
+function findingKind(issue: Issue): number {
+  const key = `${issue.severity}:${issue.code}`;
+  let kind = findingKindIds.get(key);
+  if (kind === undefined) {
+    kind = findingKinds.length;
+    findingKinds.push({ severity: issue.severity, code: issue.code });
+    findingKindIds.set(key, kind);
+  }
+  return kind;
 }
 
 /** Duplicate findings of one row, from the walk over all rows. */
@@ -439,9 +480,7 @@ interface RowDuplicates {
 
 /** Role checks in report order: fixed findings and per-row rules. */
 type RolePart = Issue | RowRule;
-type RowRule = (row: Row, r: number, out: Issue[]) => void;
-
-const NO_ISSUES: readonly Issue[] = [];
+type RowRule = (row: Row, r: number, out: IssueSink) => void;
 
 /**
  * Checks of one table, kept up to date across edits. Per row it stores the findings that
@@ -453,16 +492,18 @@ class TableCheck {
   private assetIndex = -1;
   private deps: readonly unknown[] = [];
   private layout!: TableLayout;
-  private header: Issue[] = [];
+  /** Column findings, capped (512 enum columns can hold 512,000 findings). */
+  private header = new IssueCollector();
   private headerIds: Id[] = [];
   private plan: RolePart[] = [];
   private rules: RowRule[] = [];
   /** Parallel to the table's rows; null for a row without findings. */
-  private rows: (RowFindings | null)[] = [];
+  private rows: (RowSummary | null)[] = [];
   private withFindings = 0;
   private names = new ClaimCounts();
   private unique = new Map<Id, ClaimCounts<string | number>>();
   private scratch: Issue[] = [];
+  private summary: number[] = [];
   /** Scratch location for cell paths. */
   private at: CellLocation = { base: [], row: 0, column: "", tagsAllowed: false };
 
@@ -487,10 +528,10 @@ class TableCheck {
       return;
     }
     if (this.assetIndex !== assetIndex) {
-      // Moved in the asset list: new paths. Row findings are moved when reported.
+      // Moved in the asset list: new paths. Row findings are made with paths when reported.
       this.assetIndex = assetIndex;
       this.at.base = ["assets", assetIndex];
-      this.header = [];
+      this.header = new IssueCollector();
       checkHeader(table, assetIndex, () => {}, this.header);
       this.setPlan(table, assets, conditions);
     }
@@ -504,7 +545,7 @@ class TableCheck {
     this.deps = deps;
     this.layout = tableLayout(table);
     this.at = { base: ["assets", assetIndex], row: 0, column: "", tagsAllowed: false };
-    this.header = [];
+    this.header = new IssueCollector();
     this.headerIds = [];
     checkHeader(table, assetIndex, (id) => this.headerIds.push(id), this.header);
     this.setPlan(table, assets, conditions);
@@ -531,7 +572,7 @@ class TableCheck {
   private updateRows(before: readonly Row[], after: readonly Row[], counts: ValidationCache | undefined): void {
     const d = rowDiff(before, after);
     // Rows that only moved inside the changed range (a sort, scattered deletes) keep their findings.
-    let reuse: Map<Row, RowFindings | null> | undefined;
+    let reuse: Map<Row, RowSummary | null> | undefined;
     if (d.beforeEnd - d.start > 32 && d.afterEnd - d.start > 32) {
       reuse = new Map();
       for (let r = d.start; r < d.beforeEnd; r++) reuse.set(before[r]!, this.rows[r]!);
@@ -542,14 +583,13 @@ class TableCheck {
       this.count(row, -1);
       if (counts !== undefined) this.forEachRowClaim(row, (id) => counts.ids.remove(id), (key) => counts.locKeys.remove(key));
     }
-    const fresh: (RowFindings | null)[] = new Array(d.afterEnd - d.start);
+    const fresh: (RowSummary | null)[] = new Array(d.afterEnd - d.start);
     for (let r = d.start; r < d.afterEnd; r++) {
       const row = after[r]!;
-      let findings: RowFindings | null;
+      let findings: RowSummary | null;
       if (reuse !== undefined && reuse.has(row)) {
+        // Summaries hold no row index, so a moved row keeps its own.
         findings = reuse.get(row)!;
-        // A row object listed twice must not share one entry: its path is fixed per row.
-        reuse.delete(row);
         if (findings !== null) this.withFindings++;
       } else {
         findings = this.check(row, r);
@@ -561,23 +601,24 @@ class TableCheck {
     this.rows = replaceRange(this.rows, d.start, d.beforeEnd, fresh);
   }
 
-  /** The row's own findings, or null when it has none. */
-  private check(row: Row, r: number): RowFindings | null {
-    // Most rows are clean: check into a scratch array and copy only when something was found.
+  /** Summary of the row's own findings, or null when it has none. */
+  private check(row: Row, r: number): RowSummary | null {
     const scratch = this.scratch;
+    const summary = this.summary;
+    summary.length = 0;
     scratch.length = 0;
     this.at.row = r;
     checkRow(this.layout, row, this.at, scratch, undefined);
-    const cells = scratch.length === 0 ? NO_ISSUES : scratch.slice();
-    let role: (readonly Issue[])[] | undefined;
+    tally(summary, 0, scratch);
     for (let k = 0; k < this.rules.length; k++) {
       scratch.length = 0;
       this.rules[k]!(row, r, scratch);
-      if (scratch.length > 0) (role ??= this.rules.map(() => NO_ISSUES))[k] = scratch.slice();
+      tally(summary, k + 1, scratch);
     }
-    if (cells.length === 0 && role === undefined) return null;
+    scratch.length = 0;
+    if (summary.length === 0) return null;
     this.withFindings++;
-    return { assetIndex: this.assetIndex, row: r, cells, role: role ?? this.rules.map(() => NO_ISSUES) };
+    return summary.slice();
   }
 
   /** Adds (+1) or removes (-1) the row's name and unique values. */
@@ -608,22 +649,34 @@ class TableCheck {
     }
   }
 
-  /** The row's findings, with paths for its current position. */
-  private findingsAt(r: number): RowFindings | null {
-    const findings = this.rows[r]!;
-    if (findings !== null && (findings.row !== r || findings.assetIndex !== this.assetIndex)) {
-      const move = (issue: Issue): Issue => ({ ...issue, path: ["assets", this.assetIndex, "rows", r, ...issue.path.slice(4)] });
-      findings.cells = findings.cells.map(move);
-      findings.role = findings.role.map((issues) => issues.map(move));
-      findings.row = r;
-      findings.assetIndex = this.assetIndex;
+  /**
+   * Reports one section of row r: made again from the row while one of its codes can still
+   * be listed, otherwise only counted.
+   */
+  private reportSection(issues: IssueCollector, r: number, section: number, recheck: (row: Row) => void): void {
+    const summary = this.rows[r]!;
+    if (summary === null) return;
+    let listed = false;
+    for (let i = 0; i < summary.length; i += 3) {
+      if (summary[i] === section && issues.accepts(findingKinds[summary[i + 1]!]!.code)) {
+        listed = true;
+        break;
+      }
     }
-    return findings;
+    if (listed) {
+      recheck(this.table!.rows[r]!);
+      return;
+    }
+    for (let i = 0; i < summary.length; i += 3) {
+      if (summary[i] !== section) continue;
+      const kind = findingKinds[summary[i + 1]!]!;
+      issues.omit(kind.severity, kind.code, summary[i + 2]!);
+    }
   }
 
   report(issues: IssueCollector, ids: ClaimReplay, locKeys: ClaimReplay): void {
     const table = this.table!;
-    for (const issue of this.header) issues.push(issue);
+    this.header.replayInto(issues);
     this.reportRows(table, issues);
     let rule = 0;
     for (const part of this.plan) {
@@ -634,8 +687,7 @@ class TableCheck {
       const k = rule++;
       if (this.withFindings === 0) continue;
       for (let r = 0; r < this.rows.length; r++) {
-        if (this.rows[r] === null) continue;
-        for (const issue of this.findingsAt(r)!.role[k]!) issues.push(issue);
+        if (this.rows[r] !== null) this.reportSection(issues, r, k + 1, (row) => part(row, r, issues));
       }
     }
 
@@ -666,17 +718,18 @@ class TableCheck {
   }
 
   /** Row findings in row order. Rows with a duplicate name or value are checked again. */
-  private reportRows(table: TableAsset, issues: IssueSink): void {
+  private reportRows(table: TableAsset, issues: IssueCollector): void {
+    const recheck = (r: number) => (row: Row) => {
+      this.at.row = r;
+      checkRow(this.layout, row, this.at, issues, undefined);
+    };
     const names = this.names.duplicates;
     const unique = this.layout.unique
       .map((c) => ({ c, id: table.columns[c]!.id }))
       .filter(({ id }) => this.unique.get(id)!.duplicates.size > 0);
     if (names.size === 0 && unique.length === 0) {
       if (this.withFindings === 0) return;
-      for (let r = 0; r < this.rows.length; r++) {
-        if (this.rows[r] === null) continue;
-        for (const issue of this.findingsAt(r)!.cells) issues.push(issue);
-      }
+      for (let r = 0; r < this.rows.length; r++) if (this.rows[r] !== null) this.reportSection(issues, r, 0, recheck(r));
       return;
     }
 
@@ -705,9 +758,21 @@ class TableCheck {
         this.at.row = r;
         checkRow(this.layout, row, this.at, issues, { name, cells });
       } else if (this.rows[r] !== null) {
-        for (const issue of this.findingsAt(r)!.cells) issues.push(issue);
+        this.reportSection(issues, r, 0, recheck(r));
       }
     });
+  }
+}
+
+/** Adds `found` to a row summary as section `section` (see RowSummary). */
+function tally(summary: number[], section: number, found: readonly Issue[]): void {
+  const start = summary.length;
+  for (const issue of found) {
+    const kind = findingKind(issue);
+    let i = start;
+    while (i < summary.length && summary[i + 1] !== kind) i += 3;
+    if (i < summary.length) summary[i + 2]!++;
+    else summary.push(section, kind, 1);
   }
 }
 
